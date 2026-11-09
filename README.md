@@ -3,6 +3,8 @@
 以 ICM-42688-P 加速度計 + ESP32（Wi-Fi）自製地震儀的電腦端程式。
 目前為 **v0.1 模擬版**：網頁介面，用模擬資料開發；之後以 Tauri 包成 Windows App。
 
+**線上展示：https://pyps0990-alt.github.io/seismo-monitor/** （模擬模式；線上版因 HTTPS 限制無法連 ESP32 的 `ws://`，接儀器請用本機版）
+
 ## 功能（v0.1）
 
 - 三軸即時波形（最近 20 秒，自動去除重力，單位 gal）

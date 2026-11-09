@@ -1,40 +1,4 @@
-// 台灣地理資料（簡化）：海岸線、縣市（以縣市政府位置代表）、虛擬測站、區塊網格
-
-// 台灣本島海岸線 [經度, 緯度]，順時針（沿海鄉鎮位置描點，約 1～3 km 精度）
-export const OUTLINE = [
-  [121.537, 25.298], [121.570, 25.290], [121.610, 25.262], [121.640, 25.230], [121.690, 25.212],
-  [121.715, 25.180], [121.745, 25.150], [121.790, 25.140], [121.850, 25.120], [121.920, 25.120],
-  [121.960, 25.065], [122.005, 25.010], [121.945, 25.020], [121.910, 24.975], [121.890, 24.930],
-  [121.845, 24.860], [121.825, 24.780], [121.830, 24.720], [121.850, 24.660], [121.865, 24.610],
-  [121.875, 24.585], [121.845, 24.520], [121.810, 24.450], [121.790, 24.380], [121.760, 24.300],
-  [121.700, 24.200], [121.665, 24.160], [121.640, 24.100], [121.630, 24.010], [121.615, 23.960],
-  [121.600, 23.900], [121.570, 23.780], [121.530, 23.640], [121.515, 23.560], [121.505, 23.480],
-  [121.460, 23.380], [121.430, 23.250], [121.420, 23.125], [121.380, 23.095], [121.300, 22.970],
-  [121.230, 22.880], [121.190, 22.790], [121.150, 22.745], [121.060, 22.690], [121.000, 22.610],
-  [120.970, 22.530], [120.920, 22.420], [120.895, 22.340], [120.880, 22.270], [120.880, 22.200],
-  [120.880, 22.080], [120.860, 21.990], [120.855, 21.940], [120.850, 21.900], [120.820, 21.925],
-  [120.795, 21.945], [120.750, 21.935], [120.730, 21.920], [120.710, 21.960], [120.715, 22.030],
-  [120.705, 22.075], [120.680, 22.190], [120.650, 22.260], [120.590, 22.370], [120.540, 22.420],
-  [120.500, 22.430], [120.450, 22.465], [120.390, 22.500], [120.330, 22.550], [120.275, 22.605],
-  [120.280, 22.680], [120.240, 22.780], [120.180, 22.880], [120.150, 22.990], [120.110, 23.060],
-  [120.065, 23.130], [120.100, 23.200], [120.110, 23.280], [120.140, 23.380], [120.140, 23.460],
-  [120.150, 23.580], [120.180, 23.700], [120.200, 23.770], [120.260, 23.860], [120.310, 23.930],
-  [120.365, 24.010], [120.400, 24.060], [120.450, 24.130], [120.500, 24.270], [120.570, 24.370],
-  [120.630, 24.450], [120.670, 24.500], [120.750, 24.620], [120.840, 24.700], [120.910, 24.820],
-  [120.960, 24.900], [121.010, 24.980], [121.080, 25.050], [121.170, 25.100], [121.300, 25.130],
-  [121.410, 25.180], [121.480, 25.260], [121.537, 25.298],
-];
-
-// 外島
-export const ISLANDS = [
-  { name: '澎湖', poly: [[119.52, 23.71], [119.58, 23.68], [119.62, 23.66], [119.69, 23.61], [119.69, 23.55], [119.64, 23.53], [119.60, 23.55], [119.56, 23.53], [119.52, 23.57], [119.47, 23.58], [119.44, 23.62], [119.48, 23.66]] },
-  { name: '七美望安', poly: [[119.43, 23.39], [119.52, 23.39], [119.52, 23.32], [119.43, 23.32]] },
-  { name: '綠島', poly: [[121.48, 22.68], [121.51, 22.67], [121.51, 22.64], [121.48, 22.64], [121.47, 22.66]] },
-  { name: '蘭嶼', poly: [[121.51, 22.08], [121.57, 22.07], [121.59, 22.03], [121.56, 22.00], [121.51, 22.01], [121.50, 22.05]] },
-  { name: '小琉球', poly: [[120.36, 22.36], [120.39, 22.35], [120.38, 22.32], [120.36, 22.33]] },
-  { name: '龜山島', poly: [[121.94, 24.85], [121.96, 24.85], [121.96, 24.83], [121.94, 24.83]] },
-];
-export const LAND = [OUTLINE, ...ISLANDS.map(i => i.poly)];
+// 台灣地理資料：鄉鎮界（data/towns.json）、縣市代表點、虛擬測站、距離與方位
 
 // 縣市（以縣市政府位置為代表點；震央描述採中央氣象署格式「XX政府 東南方 N 公里」）
 export const COUNTIES = [
@@ -62,30 +26,34 @@ export const COUNTIES = [
 
 // 虛擬地震測站網（縣市政府＋偏遠地區補點）
 export const STATIONS = [
-  ...COUNTIES.map(c => ({ ...c, code: c.name.slice(0, 2) })),
-  { name: '恆春', code: '恆春', lon: 120.745, lat: 22.004 },
-  { name: '成功', code: '成功', lon: 121.373, lat: 23.098 },
-  { name: '玉里', code: '玉里', lon: 121.312, lat: 23.333 },
-  { name: '阿里山', code: '阿里', lon: 120.813, lat: 23.508 },
-  { name: '合歡山', code: '合歡', lon: 121.275, lat: 24.140 },
-  { name: '蘇澳', code: '蘇澳', lon: 121.857, lat: 24.596 },
-  { name: '綠島', code: '綠島', lon: 121.490, lat: 22.660 },
-  { name: '蘭嶼', code: '蘭嶼', lon: 121.548, lat: 22.040 },
-  { name: '彭佳嶼', code: '彭佳', lon: 122.080, lat: 25.630 },
-  { name: '南澳', code: '南澳', lon: 121.800, lat: 24.462 },
-  { name: '和平', code: '和平', lon: 121.752, lat: 24.300 },
-  { name: '天祥', code: '天祥', lon: 121.494, lat: 24.180 },
-  { name: '光復', code: '光復', lon: 121.423, lat: 23.668 },
-  { name: '大武', code: '大武', lon: 120.890, lat: 22.360 },
-  { name: '梨山', code: '梨山', lon: 121.250, lat: 24.250 },
+  ...COUNTIES.map(c => ({ ...c })),
+  { name: '恆春', lon: 120.745, lat: 22.004 }, { name: '成功', lon: 121.373, lat: 23.098 },
+  { name: '玉里', lon: 121.312, lat: 23.333 }, { name: '阿里山', lon: 120.813, lat: 23.508 },
+  { name: '合歡山', lon: 121.275, lat: 24.140 }, { name: '蘇澳', lon: 121.857, lat: 24.596 },
+  { name: '綠島', lon: 121.490, lat: 22.660 }, { name: '蘭嶼', lon: 121.548, lat: 22.040 },
+  { name: '彭佳嶼', lon: 122.080, lat: 25.630 }, { name: '南澳', lon: 121.800, lat: 24.462 },
+  { name: '和平', lon: 121.752, lat: 24.300 }, { name: '天祥', lon: 121.494, lat: 24.180 },
+  { name: '光復', lon: 121.423, lat: 23.668 }, { name: '大武', lon: 120.890, lat: 22.360 },
+  { name: '梨山', lon: 121.250, lat: 24.250 },
 ];
 
-export const BOUNDS = { lonMin: 119.2, lonMax: 122.4, latMin: 21.6, latMax: 25.8 };
+export const BOUNDS = { lonMin: 119.25, lonMax: 122.25, latMin: 21.85, latMax: 25.4 };
 const LAT0 = 23.7, KX = 111.32 * Math.cos(LAT0 * Math.PI / 180), KY = 110.57;
 
 // 平面近似距離（公里），台灣尺度誤差 < 1%
 export function distKm(lon1, lat1, lon2, lat2) {
   return Math.hypot((lon1 - lon2) * KX, (lat1 - lat2) * KY);
+}
+// 點到折線距離（公里）
+export function distToLineKm(lon, lat, line) {
+  let best = Infinity;
+  for (let i = 0; i < line.length - 1; i++) {
+    const [ax, ay] = [line[i][0] * KX, line[i][1] * KY], [bx, by] = [line[i + 1][0] * KX, line[i + 1][1] * KY];
+    const px = lon * KX, py = lat * KY, dx = bx - ax, dy = by - ay;
+    const u = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
+    best = Math.min(best, Math.hypot(ax + u * dx - px, ay + u * dy - py));
+  }
+  return best;
 }
 
 const DIRS = ['北', '東北', '東', '東南', '南', '西南', '西', '西北'];
@@ -94,13 +62,32 @@ export function bearingName(fromLon, fromLat, toLon, toLat) {
   return DIRS[Math.round(((ang + 360) % 360) / 45) % 8];
 }
 
-export function pointInPolygon(lon, lat, poly = OUTLINE) {
+// ring 為扁平陣列 [lon0, lat0, lon1, lat1, ...]
+export function pointInRing(lon, lat, r) {
   let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+  for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
+    const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];
     if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
+}
+
+// ---- 鄉鎮資料 ----
+export let TOWNS = [];      // [{id, county, name, c:[lon,lat], area, rings, bbox, vs30, ampA, ampV}]
+export let COUNTY_LINES = [], COAST = [];
+export async function loadTowns(url = 'data/towns.json') {
+  const d = await (await fetch(url)).json();
+  TOWNS = d.towns.map(t => {
+    let x0 = 999, y0 = 999, x1 = -999, y1 = -999;
+    for (const r of t.rings) for (let i = 0; i < r.length; i += 2) { x0 = Math.min(x0, r[i]); x1 = Math.max(x1, r[i]); y0 = Math.min(y0, r[i + 1]); y1 = Math.max(y1, r[i + 1]); }
+    return { ...t, bbox: [x0, y0, x1, y1] };
+  });
+  COUNTY_LINES = d.countyLines; COAST = d.coast;
+  return TOWNS;
+}
+export function townAt(lon, lat) {
+  return TOWNS.find(t => lon >= t.bbox[0] && lon <= t.bbox[2] && lat >= t.bbox[1] && lat <= t.bbox[3]
+    && t.rings.some(r => pointInRing(lon, lat, r))) || null;
 }
 
 // 中央氣象署格式的震央描述
@@ -110,25 +97,7 @@ export function describeEpicenter(lon, lat) {
     const d = distKm(lon, lat, c.lon, c.lat);
     if (!best || d < best.d) best = { c, d };
   }
-  const where = LAND.some(p => pointInPolygon(lon, lat, p)) ? `位於${best.c.name}` : `位於${best.c.name}${lon > 121 ? '近海' : '外海'}`;
-  return `${best.c.name}政府${bearingName(best.c.lon, best.c.lat, lon, lat)}方 ${best.d.toFixed(1)} 公里（${where}）`;
+  const t = townAt(lon, lat);
+  const where = t ? `位於${t.county}${t.name}` : `位於${best.c.name}${lon > 121 ? '近海' : '外海'}`;
+  return { text: `${best.c.name}政府${bearingName(best.c.lon, best.c.lat, lon, lat)}方 ${best.d.toFixed(1)} 公里`, where };
 }
-
-// 區塊網格：0.05° × 0.05°（約 5 km），保留中心點在陸地上的格子；小島至少保留一格
-export const BLOCK = 0.05;
-export const BLOCKS = (() => {
-  const out = [], seen = new Set();
-  for (let i = 0; i * BLOCK < 6; i++) {
-    for (let j = 0; j * BLOCK < 4; j++) {
-      const lat = +(21.875 + i * BLOCK).toFixed(3), lon = +(119.375 + j * BLOCK).toFixed(3);
-      if (lat > 25.4 || lon > 122.1) continue;
-      if (LAND.some(p => pointInPolygon(lon, lat, p))) { out.push({ lon, lat }); seen.add(`${lon},${lat}`); }
-    }
-  }
-  for (const isl of ISLANDS) { // 太小沒有格子中心落在島上 → 補一格
-    const cx = isl.poly.reduce((a, p) => a + p[0], 0) / isl.poly.length, cy = isl.poly.reduce((a, p) => a + p[1], 0) / isl.poly.length;
-    const lon = +(Math.round((cx - 0.025) / BLOCK) * BLOCK + 0.025).toFixed(3), lat = +(Math.round((cy - 0.025) / BLOCK) * BLOCK + 0.025).toFixed(3);
-    if (!out.some(b => Math.abs(b.lon - cx) < 0.06 && Math.abs(b.lat - cy) < 0.06)) out.push({ lon, lat });
-  }
-  return out;
-})();

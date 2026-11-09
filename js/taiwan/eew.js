@@ -5,6 +5,7 @@
 // 4. 預測：以衰減式推算各區塊 PGA / PGV → 震度
 import { STATIONS, distKm } from './geo.js';
 import { intensity } from '../detector.js';
+import { siteOf } from './site.js';
 
 export const VP = 6.0;  // P 波速度 km/s（地殼平均，簡化）
 export const VS = 3.5;  // S 波速度 km/s
@@ -17,6 +18,11 @@ export function predictPGV(M, R) { return predictPGA(M, R) * 10 ** (0.2 * M - 2.
 // 對應的 S 波主頻（給模擬器產生波形用）：PGV = PGA / (2πf)
 export function dominantFreq(M) { return 1 / (2 * Math.PI * 10 ** (0.2 * M - 2.1)); }
 export const predictIntensity = (M, R) => intensity(predictPGA(M, R), predictPGV(M, R));
+// 加入場址放大（site = {ampA, ampV}）
+export function predictAt(M, R, site) {
+  const pga = predictPGA(M, R) * site.ampA, pgv = predictPGV(M, R) * site.ampV;
+  return { pga, pgv, n: intensity(pga, pgv) };
+}
 
 const P_RATIO = 0.3; // P 波初期振幅約為 S 波 PGA 的比例（簡化）
 const gauss = () => { let u = 0; for (let i = 0; i < 6; i++) u += Math.random(); return (u - 3) / Math.SQRT1_2 / 1.73; };
@@ -47,14 +53,15 @@ export function randomQuake() {
 export function createScenario(q, t0) {
   const stations = STATIONS.map(s => {
     const R = hypoDist(s.lon, s.lat, q);
-    const site = 10 ** (0.12 * gauss());                          // 場址效應
-    const pga = predictPGA(q.M, R) * site;
+    const site = siteOf(s.lon, s.lat);                            // 地形場址效應
+    const scatter = 10 ** (0.12 * gauss());                       // 其餘隨機變異
+    const pga = predictPGA(q.M, R) * site.ampA * scatter;
     return {
-      ...s, R,
+      ...s, R, site,
       tp: t0 + (R / VP) * 1000 + gauss() * 60,                    // P 波到時 + 挑波誤差 ±60 ms
       ts: t0 + (R / VS) * 1000,
       pAmp: pga * P_RATIO * 10 ** (0.1 * gauss()),                // 觀測到的 P 波初期振幅
-      pga, pgv: predictPGV(q.M, R) * site,
+      pga, pgv: predictPGV(q.M, R) * site.ampV * scatter,
     };
   });
   return { q: { ...q, t0 }, stations };
@@ -100,7 +107,8 @@ export function locate(picks, idle = [], now = picks[picks.length - 1]?.tp) {
   // 規模：每站由 P 波振幅反推，取平均
   const Ms = picks.map(p => {
     const R = Math.hypot(distKm(fine.lon, fine.lat, p.lon, p.lat), fine.depth);
-    return (Math.log10(p.pAmp / P_RATIO) - 1.39 + 1.5 * Math.log10(R + 10) + 0.002 * R) / 0.5;
+    // 先扣掉該站的場址放大，再反推規模
+    return (Math.log10(p.pAmp / P_RATIO / (p.site?.ampA ?? 1)) - 1.39 + 1.5 * Math.log10(R + 10) + 0.002 * R) / 0.5;
   });
   const M = Ms.reduce((a, b) => a + b, 0) / Ms.length;
   return { ...fine, M: Math.round(M * 10) / 10, n: picks.length };

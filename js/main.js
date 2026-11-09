@@ -143,6 +143,14 @@ const drop = $('drop');
 ['dragleave', 'drop'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', ev => ev.dataTransfer.files[0] && loadReplay(ev.dataTransfer.files[0]));
 
+// ---- 分頁 ----
+let page = 'monitor';
+document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => {
+  page = b.dataset.page;
+  document.querySelectorAll('.nav-btn').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'page-' + page));
+});
+
 // ---- 台灣地震速報模擬 ----
 const tw = new TaiwanEEW({
   sound,
@@ -164,7 +172,7 @@ function frame() {
   const now = Date.now();
   $('clock').textContent = new Date(now).toLocaleTimeString('zh-TW', { hour12: false });
   marks = marks.filter(m => now - m.t < WINDOW_MS);
-  drawWaves($('live'), live, now - WINDOW_MS, now, { smooth: true, marks });
+  if (page === 'monitor') drawWaves($('live'), live, now - WINDOW_MS, now, { smooth: true, marks });
   if (detector) {
     let pga = 0, pgv = 0;
     for (const s of peakWindow) { if (s.pga > pga) pga = s.pga; if (s.pgv > pgv) pgv = s.pgv; }

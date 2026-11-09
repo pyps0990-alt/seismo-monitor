@@ -4,138 +4,179 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Seismo Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div class="bg-grid" aria-hidden="true"></div>
-
-  <header class="topbar">
+  <aside class="sidebar">
     <div class="brand">
-      <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
-        <defs><linearGradient id="lg" x1="0" x2="1"><stop offset="0" stop-color="#5eead4"/><stop offset="1" stop-color="#818cf8"/></linearGradient></defs>
-        <rect x="2" y="2" width="44" height="44" rx="12" fill="url(#lg)" opacity=".15"/>
-        <path d="M6 26h8l3-9 4 18 4-24 4 20 3-8 3 3h7" fill="none" stroke="url(#lg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
+        <rect width="40" height="40" rx="10" fill="#2dd4bf" fill-opacity=".12"/>
+        <path d="M5 21h6l2.5-7 3.5 14 3.5-19 3.5 16 2.5-6 2.5 2H35" fill="none" stroke="#2dd4bf" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <div>
-        <h1>Seismo Monitor</h1>
-        <p>ICM-42688-P · 自製地震監測站</p>
-      </div>
+      <div><div class="brand-name">Seismo</div><div class="brand-sub">地震監測站</div></div>
     </div>
-    <div class="top-right">
+
+    <nav class="nav">
+      <button class="nav-btn on" data-page="monitor"><span class="nav-ico">〰</span><span>即時監測</span></button>
+      <button class="nav-btn" data-page="eew"><span class="nav-ico">◎</span><span>地震速報</span></button>
+      <button class="nav-btn" data-page="records"><span class="nav-ico">≡</span><span>紀錄回看</span></button>
+    </nav>
+
+    <div class="side-foot">
       <div class="clock" id="clock">--:--:--</div>
-      <div class="pill" id="statusPill"><span id="statusDot" class="dot"></span><span id="statusText">未連線</span></div>
+      <div class="pill"><span id="statusDot" class="dot"></span><span id="statusText">未連線</span></div>
+      <label class="switch"><input id="sound" type="checkbox" checked><span class="track"></span><span>音效與語音</span></label>
     </div>
-  </header>
+  </aside>
 
   <main>
-    <section class="panel controls">
-      <div class="seg" role="radiogroup" aria-label="資料來源">
-        <select id="sourceSel" class="visually-hidden-select">
-          <option value="sim">模擬資料</option>
-          <option value="ws">網路（ESP32）</option>
-        </select>
-        <button class="seg-btn on" data-src="sim">模擬資料</button>
-        <button class="seg-btn" data-src="ws">ESP32 網路</button>
-      </div>
-      <label class="field" id="wsBox" hidden><span>位址</span><input id="wsUrl" value="ws://192.168.4.1:81"></label>
-      <button id="btnConnect" class="btn primary"><span class="ico">▶</span><span class="lbl">開始</span></button>
-      <button id="btnQuake" class="btn ghost-warn">⚡ 模擬地震</button>
-      <span class="spacer"></span>
-      <label class="field small"><span>觸發 STA/LTA</span><input id="thr" type="number" value="3" step="0.5" min="1.5"></label>
-      <label class="switch"><input id="sound" type="checkbox" checked><span class="track"></span><span>提醒音效</span></label>
-      <button id="btnRecord" class="btn rec"><span class="rec-dot"></span><span class="lbl">開始記錄</span></button>
-    </section>
-
-    <div id="alert" class="alert" hidden>
-      <div class="alert-ring"></div>
-      <div><strong>偵測到震動</strong><span id="alertText"></span></div>
-    </div>
-
-    <section class="kpis">
-      <article class="panel kpi intensity" id="intCard">
-        <div class="k">估計震度</div>
-        <div class="big"><span id="intNow">–</span><small>級</small></div>
-        <div class="scale" id="scale"></div>
-        <div class="u">中央氣象署 2020 新制 · 4 級以上依 PGV 判定</div>
-      </article>
-      <article class="panel kpi">
-        <div class="k">即時 PGA</div>
-        <div class="v"><span id="pgaNow">–</span><small>gal</small></div>
-        <canvas id="spark" class="spark" height="44"></canvas>
-        <div class="u">PGV <b id="pgvNow">–</b> cm/s</div>
-      </article>
-      <article class="panel kpi">
-        <div class="k">STA / LTA</div>
-        <div class="v"><span id="ratioNow">–</span></div>
-        <div class="meter"><div id="ratioBar"></div><i id="thrMark"></i></div>
-        <div class="u">觸發門檻線</div>
-      </article>
-      <article class="panel kpi">
-        <div class="k">取樣率</div>
-        <div class="v"><span id="rateNow">–</span><small>Hz</small></div>
-        <div class="u">記錄 <b id="recNow">未記錄</b></div>
-        <div class="u" id="recRows"></div>
-      </article>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <h2>即時波形</h2>
-        <div class="legend"><i class="lx"></i>X 東西 <i class="ly"></i>Y 南北 <i class="lz"></i>Z 垂直 <span class="muted">· 最近 20 秒 · 已去除重力</span></div>
-      </div>
-      <canvas id="live" class="wave" height="440"></canvas>
-    </section>
-
-    <section class="panel tw">
-      <div class="panel-head">
-        <h2>台灣地震速報模擬</h2>
-        <div class="muted"><span id="twElapsed"></span> <span id="twPicks"></span></div>
-      </div>
-      <div class="tw-controls">
-        <label class="field"><span>情境</span><select id="twPreset"></select></label>
-        <label class="field"><span>我的位置</span><select id="twHome"></select></label>
-        <button id="twStart" class="btn primary">🌏 發生地震</button>
-        <span class="muted tw-note">虛擬測站網 <span id="twN"></span> 站 ·本機網格搜尋定位 · 簡化衰減式預測</span>
-      </div>
-      <div class="tw-body">
-        <div class="tw-map-wrap">
-          <canvas id="twMap"></canvas>
-          <div class="tw-legend" id="twLegend"></div>
-          <div class="tw-keys"><span><i class="kp"></i>P 波</span><span><i class="ks"></i>S 波</span><span>▲ 測站</span><span class="kstar">★ 推算震央</span></div>
-        </div>
-        <div class="tw-side">
-          <div id="eewCard" class="eew-card"></div>
-          <div class="table-wrap tw-table">
-            <table><thead><tr><th>縣市</th><th>預估震度</th><th>S 波抵達</th></tr></thead><tbody id="twTable"></tbody></table>
+    <!-- ================= 即時監測 ================= -->
+    <section class="page on" id="page-monitor">
+      <header class="page-head">
+        <div><h1>即時監測</h1><p>ICM-42688-P 三軸加速度 · 中央氣象署 2020 新制震度</p></div>
+        <div class="toolbar">
+          <div class="seg">
+            <select id="sourceSel" hidden><option value="sim">模擬資料</option><option value="ws">網路（ESP32）</option></select>
+            <button class="seg-btn on" data-src="sim">模擬</button>
+            <button class="seg-btn" data-src="ws">ESP32</button>
           </div>
+          <label class="field" id="wsBox" hidden><input id="wsUrl" value="ws://192.168.4.1:81" aria-label="ESP32 位址"></label>
+          <button id="btnConnect" class="btn primary"><span class="ico">▶</span><span class="lbl">開始</span></button>
+          <button id="btnQuake" class="btn">⚡ 模擬震動</button>
+          <button id="btnRecord" class="btn"><span class="rec-dot"></span><span class="lbl">開始記錄</span></button>
+        </div>
+      </header>
+
+      <div id="alert" class="alert" hidden><div class="alert-ring"></div><div><strong>偵測到震動</strong><span id="alertText"></span></div></div>
+
+      <div class="kpis">
+        <article class="card kpi intensity">
+          <div class="k">即時震度</div>
+          <div class="big"><span id="intNow">–</span><small>級</small></div>
+          <div class="scale" id="scale"></div>
+        </article>
+        <article class="card kpi">
+          <div class="k">PGA 最大地動加速度</div>
+          <div class="v"><span id="pgaNow">–</span><small>gal</small></div>
+          <canvas id="spark" class="spark"></canvas>
+        </article>
+        <article class="card kpi">
+          <div class="k">PGV 最大地動速度</div>
+          <div class="v"><span id="pgvNow">–</span><small>cm/s</small></div>
+          <div class="u">4 級以上依 PGV 判定 5 弱～7 級</div>
+        </article>
+        <article class="card kpi">
+          <div class="k">STA / LTA 觸發比</div>
+          <div class="v"><span id="ratioNow">–</span></div>
+          <div class="meter"><div id="ratioBar"></div><i id="thrMark"></i></div>
+          <label class="field mini"><span>門檻</span><input id="thr" type="number" value="3" step="0.5" min="1.5"></label>
+        </article>
+        <article class="card kpi">
+          <div class="k">取樣率／記錄</div>
+          <div class="v"><span id="rateNow">–</span><small>Hz</small></div>
+          <div class="u"><b id="recNow">未記錄</b> <span id="recRows"></span></div>
+        </article>
+      </div>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>三軸波形</h2>
+          <div class="legend"><i class="lx"></i>X 東西 <i class="ly"></i>Y 南北 <i class="lz"></i>Z 垂直 <span class="muted">· 最近 20 秒</span></div>
+        </div>
+        <canvas id="live" class="wave"></canvas>
+      </article>
+    </section>
+
+    <!-- ================= 地震速報 ================= -->
+    <section class="page" id="page-eew">
+      <header class="page-head">
+        <div><h1>地震速報模擬</h1><p>虛擬測站網 <span id="twN"></span> 站 · 本機定位 · 鄉鎮地盤放大</p></div>
+        <div class="muted mono"><span id="twElapsed"></span>　<span id="twPicks"></span></div>
+      </header>
+
+      <div class="eew-layout">
+        <div class="eew-left">
+          <article class="card">
+            <h2>地震參數</h2>
+            <label class="field col"><span>預設情境</span><select id="twPreset"></select></label>
+            <div class="row2">
+              <label class="field col"><span>經度 °E</span><input id="twLon" type="number" step="0.01"></label>
+              <label class="field col"><span>緯度 °N</span><input id="twLat" type="number" step="0.01"></label>
+            </div>
+            <div class="hint">📍 點地圖可直接設定震央 · <span id="twWhere"></span></div>
+            <label class="field col"><span>深度 <b id="twDepthV"></b></span><input id="twDepth" type="range" min="2" max="150" step="1"></label>
+            <label class="field col"><span>規模 <b id="twMV"></b></span><input id="twM" type="range" min="3.5" max="8" step="0.1"></label>
+            <div class="row2">
+              <button id="twRandom" class="btn">🎲 隨機</button>
+              <button id="twStart" class="btn primary">發生地震</button>
+            </div>
+          </article>
+          <article class="card">
+            <h2>我的位置</h2>
+            <div class="row2">
+              <label class="field col"><span>縣市</span><select id="twHomeCounty"></select></label>
+              <label class="field col"><span>鄉鎮市區</span><select id="twHomeTown"></select></label>
+            </div>
+            <div class="hint" id="twHomeSite"></div>
+          </article>
+        </div>
+
+        <article class="card map-card">
+          <div class="map-tools">
+            <div class="seg small">
+              <button class="seg-btn on" data-layer="intensity">預估震度</button>
+              <button class="seg-btn" data-layer="site">地盤分類</button>
+            </div>
+            <div class="keys"><span><i class="kp"></i>P 波</span><span><i class="ks"></i>S 波</span><span>▲ 測站</span><span class="kstar">★ 推算震央</span><span class="khome">● 我</span></div>
+          </div>
+          <div class="map-wrap">
+            <canvas id="twMap"></canvas>
+            <div class="tip" id="twTip" hidden></div>
+            <div class="map-legend" id="legendInt"><div id="twLegend"></div></div>
+            <div class="map-legend" id="legendSite" hidden>
+              <div><i style="background:#0e7490"></i>岩盤 ≥600</div><div><i style="background:#0d9488"></i>450–600</div>
+              <div><i style="background:#65a30d"></i>330–450</div><div><i style="background:#ca8a04"></i>260–330</div>
+              <div><i style="background:#d97706"></i>200–260</div><div><i style="background:#b45309"></i>軟弱 &lt;200</div>
+              <div class="muted">Vs30 (m/s)</div>
+            </div>
+          </div>
+        </article>
+
+        <div class="eew-right">
+          <div id="eewCard" class="eew-card"></div>
+          <article class="card">
+            <div class="card-head"><h2>鄉鎮預估震度</h2><span class="muted">前 40 名</span></div>
+            <div class="table-wrap tw-table">
+              <table><thead><tr><th>鄉鎮</th><th>震度</th><th>主震波</th></tr></thead><tbody id="twTable"></tbody></table>
+            </div>
+          </article>
         </div>
       </div>
     </section>
 
-    <div class="two">
-      <section class="panel">
-        <div class="panel-head"><h2>事件紀錄</h2><span class="muted" id="evCount">尚無事件</span></div>
-        <div class="table-wrap">
-          <table id="events">
-            <thead><tr><th>時間</th><th>PGA</th><th>PGV</th><th>震度</th><th>持續</th><th>檔案</th></tr></thead>
-            <tbody></tbody>
-          </table>
-          <div class="empty" id="evEmpty">偵測到震動後，事件前後 30 秒的資料會自動存檔並列在這裡。</div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head"><h2>回看 CSV</h2><span class="muted" id="replayInfo"></span></div>
-        <label class="drop" id="drop">
-          <input type="file" id="fileIn" accept=".csv" hidden>
-          <span class="drop-ico">⇪</span>
-          <span>拖曳 CSV 到這裡，或<u>點此選擇檔案</u></span>
-        </label>
-        <canvas id="replay" class="wave" height="300" hidden></canvas>
-      </section>
-    </div>
-
-    <footer>Seismo Monitor v0.1 · <a href="https://github.com/pyps0990-alt/seismo-monitor" target="_blank" rel="noopener">GitHub</a></footer>
+    <!-- ================= 紀錄回看 ================= -->
+    <section class="page" id="page-records">
+      <header class="page-head"><div><h1>紀錄回看</h1><p>事件自動保存前後 30 秒 · CSV 可拖曳載入</p></div></header>
+      <div class="two">
+        <article class="card">
+          <div class="card-head"><h2>事件紀錄</h2><span class="muted" id="evCount">尚無事件</span></div>
+          <div class="table-wrap">
+            <table id="events"><thead><tr><th>時間</th><th>PGA</th><th>PGV</th><th>震度</th><th>持續</th><th>檔案</th></tr></thead><tbody></tbody></table>
+            <div class="empty" id="evEmpty">偵測到震動後，事件資料會自動存檔並列在這裡。</div>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head"><h2>回看 CSV</h2><span class="muted" id="replayInfo"></span></div>
+          <label class="drop" id="drop"><input type="file" id="fileIn" accept=".csv" hidden><span class="drop-ico">⇪</span><span>拖曳 CSV 到這裡，或<u>選擇檔案</u></span></label>
+          <canvas id="replay" class="wave" hidden></canvas>
+        </article>
+      </div>
+      <p class="credit">鄉鎮界：內政部國土測繪中心（政府資料開放授權），經 taiwan-atlas（MIT）整理 · 衰減式與地盤推估為教學用簡化模型 ·
+        <a href="https://github.com/pyps0990-alt/seismo-monitor" target="_blank" rel="noopener">GitHub</a></p>
+    </section>
   </main>
 
   <script type="module" src="js/main.js"></script>

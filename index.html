@@ -130,11 +130,12 @@
               <button class="seg-btn on" data-layer="intensity">預估震度</button>
               <button class="seg-btn" data-layer="site">地盤分類</button>
             </div>
-            <div class="keys"><span><i class="kp"></i>P 波</span><span><i class="ks"></i>S 波</span><span>▲ 測站</span><span class="kstar">★ 推算震央</span><span class="khome">● 我</span></div>
+            <div class="keys"><span><i class="kp"></i>P 波</span><span><i class="ks"></i>S 波</span><span>▲ 陸上站</span><span class="kobs">◆ 海底站</span><span class="kstar">★ 推算震央</span><span class="khome">● 我</span></div>
           </div>
           <div class="map-wrap">
             <canvas id="twMap"></canvas>
             <div class="tip" id="twTip" hidden></div>
+            <div class="zoom"><button id="zIn" title="放大">＋</button><button id="zOut" title="縮小">－</button><button id="zReset" title="重設">⟲</button></div>
             <div class="map-legend" id="legendInt"><div id="twLegend"></div></div>
             <div class="map-legend" id="legendSite" hidden>
               <div><i style="background:#0e7490"></i>岩盤 ≥600</div><div><i style="background:#0d9488"></i>450–600</div>
@@ -148,7 +149,7 @@
         <div class="eew-right">
           <div id="eewCard" class="eew-card"></div>
           <article class="card">
-            <div class="card-head"><h2>鄉鎮預估震度</h2><span class="muted">前 40 名</span></div>
+            <div class="card-head"><h2>鄉鎮預估震度</h2><span class="muted" id="twCount"></span></div>
             <div class="table-wrap tw-table">
               <table><thead><tr><th>鄉鎮</th><th>震度</th><th>主震波</th></tr></thead><tbody id="twTable"></tbody></table>
             </div>

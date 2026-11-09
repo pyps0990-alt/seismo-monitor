@@ -1,12 +1,12 @@
 // 台灣地震速報模擬：自訂／預設地震 → 測站觸發 → 本機定位 → 發布速報（一般／緊急）→ 鄉鎮震度預測與倒數
 import { COUNTIES, STATIONS, TOWNS, loadTowns, townAt, describeEpicenter, distKm } from './geo.js';
-import { createScenario, locate, predictAt, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
+import { createScenario, locateRobust, triggerOf, predictAt, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
 import { siteOf, siteClass } from './site.js';
 import { INTENSITY_COLORS, intensity, intensityIndex } from '../detector.js';
 import { TaiwanMap } from './map.js';
 
 const $ = id => document.getElementById(id);
-const PROCESS_MS = 500;
+const PROCESS_MS = 300;
 const MAX_REPORTS = 10;
 const END_MS = 75000;
 const EMERGENCY_M = 5.5;          // 預估規模 > 5.5
@@ -24,6 +24,9 @@ export class TaiwanEEW {
       onClick: p => { if (!this.sc || this.reveal) this.setEpicenter(p); },
       onHover: (p, e) => this.onHover(p, e),
     });
+    $('zIn').onclick = () => this.map.zoomBy(1.5);
+    $('zOut').onclick = () => this.map.zoomBy(1 / 1.5);
+    $('zReset').onclick = () => this.map.reset();
     this.ready = this.init();
   }
 
@@ -87,7 +90,7 @@ export class TaiwanEEW {
     const q = this.readQuake();
     const t0 = Date.now() + 1500;
     this.sc = createScenario(q, t0);
-    Object.assign(this, { sol: null, report: 0, lastN: 0, firstIssued: null, localPick: null, reveal: false,
+    Object.assign(this, { sol: null, report: 0, lastN: 0, lastUsed: 0, lastReportN: 0, rejected: null, lastSpeech: 0, lastCalc: 0, firstIssued: null, localPick: null, reveal: false,
       townInts: null, lastTick: null, arrived: false, level: null });
 
     // 本站（我的位置）收到的地震波 → 送進模擬器
@@ -105,12 +108,12 @@ export class TaiwanEEW {
 
   onLocalTrigger(t) { if (!this.sc || this.localPick || this.reveal) return false; this.localPick = t; return true; }
 
+  // 目前所有觸發（含誤觸發）；本站地震儀偵測到 P 波也算一站
   currentPicks(now) {
-    const homeName = this.home?.name;
-    return this.sc.stations.filter(s => s.tp <= now).sort((a, b) => a.tp - b.tp)
-      .concat(this.localPick && !this.sc.stations.some(s => s.tp <= now && s.name === homeName)
-        ? [{ name: '本站', lon: this.home.lon, lat: this.home.lat, tp: this.localPick, pAmp: this.homeTruth.pga * 0.3, site: this.home.site, local: true }] : [])
-      .sort((a, b) => a.tp - b.tp);
+    const out = [];
+    for (const s of this.sc.stations) { const tr = triggerOf(s); if (tr.tp <= now) out.push({ ...s, ...tr }); }
+    if (this.localPick) out.push({ name: '本站', lon: this.home.lon, lat: this.home.lat, tp: this.localPick, pAmp: this.homeTruth.pga * 0.3, site: this.home.site, local: true });
+    return out.sort((a, b) => a.tp - b.tp);
   }
 
   // 測站目前實測震度：S 波到達前只有 P 波（振幅小），之後為完整地動
@@ -130,23 +133,32 @@ export class TaiwanEEW {
     for (const s of sc.stations) { const n = this.stationInt(s, now); if (n) { stationInts.set(s.name, n); if (intensityIndex(n) > intensityIndex(maxObs)) maxObs = n; } }
     this.maxObs = maxObs;
 
+    // 每有新觸發就做「關聯＋定位」；至少 3 站互相確認才發布第一報，之後 8 站內每站更新、再來每 3 站更新
     const n = picks.length;
-    if (!this.reveal && n && now >= picks[n - 1].tp + PROCESS_MS && n > this.lastN && this.report < MAX_REPORTS && (n <= 5 || n - this.lastN >= 3)) {
+    const step = this.lastUsed < 8 ? 1 : 3;
+    // 有新觸發時每 PROCESS_MS 計算一次（測站密集時觸發是連續進來的，不能等「安靜」才算）
+    if (!this.reveal && n && n > this.lastN && now - (this.lastCalc ?? 0) >= PROCESS_MS && this.report < MAX_REPORTS
+        && (this.report === 0 || n - this.lastReportN >= step)) {
+      this.lastN = n; this.lastCalc = now;
       const idle = sc.stations.filter(s => !picked.has(s.name));
       const t = performance.now();
-      const prev = this.sol ? this.homePred(this.sol).n : null;
-      this.sol = locate(picks, idle, now);
-      this.sol.calcMs = performance.now() - t;
-      this.sol.issued = now;
-      this.lastN = n; this.report++;
-      this.townInts = TOWNS.map(tw => predictAt(this.sol.M, hypo(tw.c[0], tw.c[1], this.sol), tw).n);
-      this.announce(now, prev);
+      const sol = locateRobust(picks, idle, now);
+      if (sol && (this.report === 0 || sol.n - this.lastUsed >= step)) {
+        const prev = this.sol ? this.homePred(this.sol).n : null;
+        this.sol = sol;
+        this.sol.calcMs = performance.now() - t;
+        this.sol.issued = now;
+        this.lastUsed = sol.n; this.lastReportN = n; this.report++;
+        this.rejected = new Set(sol.rejected.map(p => p.name));
+        this.townInts = TOWNS.map(tw => predictAt(this.sol.M, hypo(tw.c[0], tw.c[1], this.sol), tw).n);
+        this.announce(now, prev);
+      }
     }
     // 速報等級也可能在兩報之間因測站實測震度升級
     if (this.sol && !this.reveal && this.level === 'normal' && this.isEmergency()) this.announce(now, null, true);
 
     if (!this.reveal && now - sc.q.t0 > END_MS) { this.reveal = true; $('twStart').disabled = false; document.body.classList.remove('quake-on'); }
-    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.townInts, picked, stationInts,
+    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.townInts, picked, stationInts, rejected: this.rejected,
       home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, reveal: this.reveal, pickPoint: this.reveal ? this.readQuake() : null });
     this.render(now, n);
     if (this.reveal && now - sc.q.t0 > END_MS + 60000) { this.sc = null; this.renderIdle(); }
@@ -159,21 +171,25 @@ export class TaiwanEEW {
     return { ...predictAt(so.M, R, h.site), ts: so.t0 + (R / VS) * 1000 };
   }
 
+  // 語音格式：「N 級地震，N 秒後抵達」
+  phrase(n, sec) {
+    const lvl = /[弱強]/.test(n) ? `${n}地震` : `${n}級地震`;
+    return sec > 0 ? `${lvl}，${sec}秒後抵達` : `${lvl}，已抵達`;
+  }
+  say(text, delay = 0) { this.sound.speak(text, delay); this.lastSpeech = Date.now() + delay * 1000; }
+
   announce(now, prevInt, upgrade = false) {
     const so = this.sol, hp = this.homePred(so);
     const sec = Math.ceil((hp.ts - now) / 1000);
-    const where = describeEpicenter(so.lon, so.lat).where.replace('位於', '');
-    const when = sec > 0 ? `，約 ${sec} 秒後抵達` : '';
     const emergency = this.isEmergency();
     if (this.report === 1 || upgrade) {
       if (this.report === 1) this.firstIssued = now;
       this.level = emergency ? 'emergency' : 'normal';
       const d = emergency ? this.sound.eewEmergency() : this.sound.eewNormal();
-      const title = emergency ? '緊急地震速報' : '地震速報';
-      this.sound.speak(`${title}。${where}發生地震，預估規模 ${so.M.toFixed(1)}。${this.home.short}預估震度 ${hp.n} 級${when}。`, d);
+      this.say(this.phrase(hp.n, sec), d);
     } else {
       this.sound.update();
-      if (prevInt && prevInt !== hp.n && sec > 2) this.sound.speak(`更新，${this.home.short}預估震度 ${hp.n} 級${when}。`, 0.3);
+      if (prevInt && prevInt !== hp.n && sec > 2) this.say(this.phrase(hp.n, sec), 0.2);
     }
   }
 
@@ -188,7 +204,9 @@ export class TaiwanEEW {
 
     if (!this.reveal && sec !== this.lastTick) {
       this.lastTick = sec;
-      if (sec > 0 && sec <= 10) this.sound.tick(sec);
+      // 整十秒播報剩餘秒數（避開剛播完速報的 3 秒內）
+      if (sec > 0 && sec % 10 === 0 && Date.now() - (this.lastSpeech ?? 0) > 3000) this.say(`${sec}秒`);
+      else if (sec > 0 && sec <= 5) this.sound.tick(sec);
       if (sec <= 0 && !this.arrived) { this.arrived = true; this.sound.arrive(); }
     }
 
@@ -202,7 +220,8 @@ export class TaiwanEEW {
         <div class="eew-title">${emergency ? '緊急地震速報' : '地震速報'}</div></div>
         <span class="eew-no">第 ${this.report} 報</span>
       </div>
-      <div class="eew-sub">${hhmmss(so.issued)} 發布 · ${quality} · 本機運算 ${so.calcMs.toFixed(0)} ms · 測站最大實測 ${badge(this.maxObs)}</div>
+      <div class="eew-sub">${hhmmss(so.issued)} 發布 · 發震後 ${((this.firstIssued - this.sc.q.t0) / 1000).toFixed(1)} 秒第一報 · ${quality} · 運算 ${so.calcMs.toFixed(0)} ms<br>
+        測站最大實測 ${badge(this.maxObs)}${so.rejected.length ? ` · 已排除 ${so.rejected.length} 個誤觸發／無關觸發` : ''}</div>
       <div class="eew-grid">
         <div><div class="k">預估規模</div><div class="v">M ${so.M.toFixed(1)}</div></div>
         <div><div class="k">深度</div><div class="v">${so.n < 4 ? '—' : so.depth.toFixed(0)}<small>${so.n < 4 ? '待定' : 'km'}</small></div></div>
@@ -223,9 +242,13 @@ export class TaiwanEEW {
       <div class="eew-local">${this.localPick ? `● 本站地震儀 ${hhmmss(this.localPick)} 偵測到 P 波` : '○ 本站地震儀尚未偵測到震動'}</div>
       ${this.reveal ? this.truthHtml() : ''}`;
 
-    // 鄉鎮預估（前 40 名）
+    // 鄉鎮預估（第一報起即顯示所有 1 級以上鄉鎮）；表格每 0.5 秒更新一次即可
+    if (now - (this.lastTable ?? 0) < 500 && this.lastTableReport === this.report) return;
+    this.lastTable = now; this.lastTableReport = this.report;
     const rows = TOWNS.map((t, i) => ({ t, n: this.townInts[i], s: (so.t0 + (hypo(t.c[0], t.c[1], so) / VS) * 1000 - now) / 1000 }))
-      .sort((a, b) => intensityIndex(b.n) - intensityIndex(a.n) || a.s - b.s).slice(0, 40);
+      .filter(r => r.n !== '0' || r.t === this.homeTown)
+      .sort((a, b) => intensityIndex(b.n) - intensityIndex(a.n) || a.s - b.s);
+    $('twCount').textContent = `${rows.length} 個鄉鎮`;
     $('twTable').innerHTML = rows.map(r => `<tr class="${r.t === this.homeTown ? 'me' : ''}"><td>${r.t.county}<b>${r.t.name}</b></td><td>${badge(r.n)}</td>
       <td class="num">${r.s > 0 ? Math.ceil(r.s) + ' 秒' : '<span class="muted">抵達</span>'}</td></tr>`).join('');
   }

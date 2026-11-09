@@ -136,6 +136,11 @@ canvas.wave { width: 100%; display: block; border-radius: 10px; background: var(
 .map-legend #twLegend { display: grid; gap: 3px; }
 .map-legend div { display: flex; align-items: center; gap: 6px; color: var(--mut); }
 .map-legend i { width: 16px; height: 10px; border-radius: 2px; }
+.kobs { color: #60a5fa; }
+.zoom { position: absolute; left: 10px; top: 10px; display: grid; gap: 4px; }
+.zoom button { width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line2); background: rgba(17,20,26,.85); color: var(--fg); font-size: 1rem; cursor: pointer; }
+.zoom button:hover { border-color: var(--accent); color: var(--accent); }
+#twMap { touch-action: none; }
 .tip { position: absolute; z-index: 2; pointer-events: none; width: 220px; padding: 10px 12px; border-radius: 10px; background: rgba(17,20,26,.95); border: 1px solid var(--line2); font-size: .78rem; line-height: 1.6; color: var(--mut); box-shadow: 0 8px 24px rgba(0,0,0,.5); }
 .tip b { color: var(--fg); font-size: .88rem; }
 .tw-table { max-height: 380px; overflow-y: auto; }

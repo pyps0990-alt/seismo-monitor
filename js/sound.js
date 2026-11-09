@@ -35,19 +35,35 @@ export class Sound {
   // 一般監測觸發：三音
   trigger() { [659, 784, 988].forEach((f, i) => this.note(f, i * 0.12, 0.14, 0.7)); }
 
-  // 一般地震速報：「叮咚」兩次
-  eewNormal() {
-    [[880, 0], [698, 0.32], [880, 0.9], [698, 1.22]].forEach(([f, t]) => this.note(f, t, 0.2, 1.0));
-    return 2.0;
+  // 持續音（警報用）：三角波＋少量方波疊加，帶短起音與釋音，聽起來是「嗶」而不是刺耳噪音
+  beep(f, t, dur, vol = 0.18) {
+    const ac = this.ac(); if (!ac) return;
+    const t0 = ac.currentTime + t;
+    for (const [type, v] of [['triangle', 1], ['square', 0.12]]) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol * v, t0 + 0.015);
+      g.gain.setValueAtTime(vol * v, t0 + dur - 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(this.master); o.start(t0); o.stop(t0 + dur + 0.02);
+    }
   }
-  // 緊急地震速報：四音上行和弦重複三次，較急促
+
+  // 一般地震速報：高低交替警示音 ×4（約 1.8 秒）
+  eewNormal() {
+    for (let i = 0; i < 4; i++) { this.beep(988, i * 0.45, 0.2); this.beep(740, i * 0.45 + 0.22, 0.2); }
+    return 1.9;
+  }
+  // 緊急地震速報：更高、更快的高低交替 ×8，中間夾三連嗶（約 2.6 秒）
   eewEmergency() {
-    for (let k = 0; k < 3; k++) [523, 659, 784, 1047].forEach((f, i) => this.note(f, k * 0.75 + i * 0.12, 0.2, 0.6));
-    return 2.4;
+    for (let i = 0; i < 8; i++) { this.beep(1175, i * 0.3, 0.14, 0.22); this.beep(880, i * 0.3 + 0.15, 0.14, 0.22); }
+    for (let i = 0; i < 3; i++) this.beep(1568, 2.45 + i * 0.12, 0.08, 0.2);
+    return 2.9;
   }
 
   update() { this.note(1175, 0, 0.1, 0.6); }                               // 速報更新
-  tick(sec) { this.note(sec <= 3 ? 1319 : 988, 0, sec <= 3 ? 0.12 : 0.07, 0.25); } // 倒數
+  tick(sec) { this.beep(sec <= 3 ? 1319 : 988, 0, 0.09, sec <= 3 ? 0.2 : 0.13); } // 倒數最後 5 秒
   arrive() { [784, 659, 523].forEach((f, i) => this.note(f, i * 0.15, 0.16, 1.2)); } // 主震波抵達（下行）
 
   speak(text, delay = 0) {

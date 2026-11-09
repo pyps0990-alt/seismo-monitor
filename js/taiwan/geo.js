@@ -24,20 +24,27 @@ export const COUNTIES = [
   { name: '澎湖縣', lon: 119.566, lat: 23.570 },
 ];
 
-// 虛擬地震測站網（縣市政府＋偏遠地區補點）
-export const STATIONS = [
-  ...COUNTIES.map(c => ({ ...c })),
-  { name: '恆春', lon: 120.745, lat: 22.004 }, { name: '成功', lon: 121.373, lat: 23.098 },
-  { name: '玉里', lon: 121.312, lat: 23.333 }, { name: '阿里山', lon: 120.813, lat: 23.508 },
-  { name: '合歡山', lon: 121.275, lat: 24.140 }, { name: '蘇澳', lon: 121.857, lat: 24.596 },
-  { name: '綠島', lon: 121.490, lat: 22.660 }, { name: '蘭嶼', lon: 121.548, lat: 22.040 },
-  { name: '彭佳嶼', lon: 122.080, lat: 25.630 }, { name: '南澳', lon: 121.800, lat: 24.462 },
-  { name: '和平', lon: 121.752, lat: 24.300 }, { name: '天祥', lon: 121.494, lat: 24.180 },
-  { name: '光復', lon: 121.423, lat: 23.668 }, { name: '大武', lon: 120.890, lat: 22.360 },
-  { name: '梨山', lon: 121.250, lat: 24.250 },
+// 海底地震儀（參考東部海域海纜觀測系統的分布，位置為示意）
+const OBS = [
+  ['宜蘭海纜1', 121.98, 24.82], ['宜蘭海纜2', 122.10, 24.72], ['宜蘭海纜3', 122.25, 24.60], ['宜蘭海纜4', 122.42, 24.48],
+  ['和平外海', 121.95, 24.25], ['花蓮外海1', 121.85, 23.95], ['花蓮外海2', 122.10, 23.85], ['花蓮外海3', 121.80, 23.55],
+  ['成功外海', 121.62, 23.10], ['臺東外海', 121.40, 22.70], ['蘭嶼北', 121.75, 22.35], ['恆春外海', 120.95, 21.90],
+  ['小琉球外海', 120.30, 22.20], ['龜山島外海', 122.10, 25.00], ['北部外海', 121.80, 25.35],
 ];
 
-export const BOUNDS = { lonMin: 119.25, lonMax: 122.25, latMin: 21.85, latMax: 25.4 };
+// 虛擬地震測站網：陸上站由鄉鎮中心點挑選（間距 ≥ 7 km，約每 7～10 km 一站）＋海底站
+export let STATIONS = [];
+function buildStations() {
+  const land = [];
+  const towns = [...TOWNS].sort((a, b) => a.area - b.area); // 小鄉鎮（人口密集區）優先
+  for (const t of towns) {
+    const [lon, lat] = t.c;
+    if (land.every(s => distKm(lon, lat, s.lon, s.lat) >= 7)) land.push({ name: `${t.county.slice(0, 2)}${t.name}`, lon, lat, type: 'land' });
+  }
+  STATIONS = [...land, ...OBS.map(([name, lon, lat]) => ({ name, lon, lat, type: 'obs' }))];
+}
+
+export const BOUNDS = { lonMin: 119.25, lonMax: 122.6, latMin: 21.75, latMax: 25.5 };
 const LAT0 = 23.7, KX = 111.32 * Math.cos(LAT0 * Math.PI / 180), KY = 110.57;
 
 // 平面近似距離（公里），台灣尺度誤差 < 1%
@@ -83,6 +90,7 @@ export async function loadTowns(url = 'data/towns.json') {
     return { ...t, bbox: [x0, y0, x1, y1] };
   });
   COUNTY_LINES = d.countyLines; COAST = d.coast;
+  buildStations();
   return TOWNS;
 }
 export function townAt(lon, lat) {

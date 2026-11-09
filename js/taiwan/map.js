@@ -10,11 +10,34 @@ export const vs30Color = v => VS30_COLORS.find(([lim]) => v < lim)[1];
 export class TaiwanMap {
   constructor(canvas, { onClick, onHover } = {}) {
     this.canvas = canvas; this.key = '';
-    this.hover = null;
-    canvas.addEventListener('mousemove', e => { const p = this.toLonLat(e); this.hoverPt = p; onHover?.(p, e); });
-    canvas.addEventListener('mouseleave', () => { this.hoverPt = null; onHover?.(null); });
-    canvas.addEventListener('click', e => onClick?.(this.toLonLat(e)));
+    this.view = { z: 1, tx: 0, ty: 0 };   // 縮放倍率與平移（螢幕像素）
+    const local = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+
+    // 滾輪縮放（以游標為中心）
+    canvas.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = local(e); this.zoomAt(x, y, e.deltaY < 0 ? 1.25 : 0.8); }, { passive: false });
+    // 拖曳平移；移動很少則視為點擊
+    let drag = null;
+    canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, tx: this.view.tx, ty: this.view.ty, moved: false }; canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener('pointermove', e => {
+      if (drag) {
+        const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+        if (Math.hypot(dx, dy) > 4) drag.moved = true;
+        if (drag.moved) { this.view.tx = drag.tx + dx; this.view.ty = drag.ty + dy; canvas.style.cursor = 'grabbing'; onHover?.(null); return; }
+      }
+      onHover?.(this.toLonLat(e), e);
+    });
+    canvas.addEventListener('pointerup', e => { if (drag && !drag.moved) onClick?.(this.toLonLat(e)); drag = null; canvas.style.cursor = ''; });
+    canvas.addEventListener('pointerleave', () => onHover?.(null));
+    canvas.addEventListener('dblclick', e => { const [x, y] = local(e); this.zoomAt(x, y, 2); });
   }
+
+  zoomAt(x, y, f) {
+    const v = this.view, z = Math.min(16, Math.max(1, v.z * f)), k = z / v.z;
+    v.tx = x - (x - v.tx) * k; v.ty = y - (y - v.ty) * k; v.z = z;
+    if (z === 1) { v.tx = 0; v.ty = 0; }
+  }
+  zoomBy(f) { this.zoomAt(this.canvas.clientWidth / 2, this.canvas.clientHeight / 2, f); }
+  reset() { this.view = { z: 1, tx: 0, ty: 0 }; }
 
   toLonLat(e) {
     const r = this.canvas.getBoundingClientRect();
@@ -33,14 +56,21 @@ export class TaiwanMap {
       const spanX = (BOUNDS.lonMax - BOUNDS.lonMin) * KX, spanY = BOUNDS.latMax - BOUNDS.latMin;
       const s = Math.min(w / spanX, h / spanY);
       const ox = (w - spanX * s) / 2, oy = (h - spanY * s) / 2;
-      this.px = (lon, lat) => [ox + (lon - BOUNDS.lonMin) * KX * s, oy + (BOUNDS.latMax - lat) * s];
-      this.inv = (x, y) => ({ lon: (x - ox) / (KX * s) + BOUNDS.lonMin, lat: BOUNDS.latMax - (y - oy) / s });
-      this.kmPx = s / 110.57;
-      const path = flat => { const p = new Path2D(); for (let i = 0; i < flat.length; i += 2) { const [x, y] = this.px(flat[i], flat[i + 1]); i ? p.lineTo(x, y) : p.moveTo(x, y); } return p; };
+      // base：未縮放的投影座標；Path2D 只在尺寸改變時建立一次，縮放平移用 canvas transform
+      this.base = (lon, lat) => [ox + (lon - BOUNDS.lonMin) * KX * s, oy + (BOUNDS.latMax - lat) * s];
+      this.baseInv = (x, y) => ({ lon: (x - ox) / (KX * s) + BOUNDS.lonMin, lat: BOUNDS.latMax - (y - oy) / s });
+      this.baseKmPx = s / 110.57;
+      const path = flat => { const p = new Path2D(); for (let i = 0; i < flat.length; i += 2) { const [x, y] = this.base(flat[i], flat[i + 1]); i ? p.lineTo(x, y) : p.moveTo(x, y); } return p; };
       this.townPaths = TOWNS.map(t => { const p = new Path2D(); t.rings.forEach(r => { p.addPath(path(r)); }); return p; });
+      this.townBorders = new Path2D(); this.townPaths.forEach(p => this.townBorders.addPath(p)); // 一次畫完所有鄉鎮界
       this.countyPath = new Path2D(); COUNTY_LINES.forEach(l => this.countyPath.addPath(path(l)));
       this.coastPath = new Path2D(); COAST.forEach(l => this.coastPath.addPath(path(l)));
     }
+    const v = this.view;
+    this.px = (lon, lat) => { const [x, y] = this.base(lon, lat); return [x * v.z + v.tx, y * v.z + v.ty]; };
+    this.inv = (x, y) => this.baseInv((x - v.tx) / v.z, (y - v.ty) / v.z);
+    this.kmPx = this.baseKmPx * v.z;
+    this.dpr = dpr;
     return { ctx, w, h };
   }
 
@@ -57,21 +87,30 @@ export class TaiwanMap {
     for (let lon = 120; lon <= 122; lon++) { const [x] = P(lon, 0); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); ctx.fillText(`${lon}°E`, x + 3, h - 6); }
     for (let lat = 22; lat <= 25; lat++) { const [, y] = P(0, lat); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); ctx.fillText(`${lat}°N`, 4, y - 3); }
 
-    // 鄉鎮區塊
+    // 鄉鎮區塊（套用縮放平移 transform；線寬除以倍率保持粗細）
+    const v = this.view, z = v.z;
+    ctx.save();
+    ctx.setTransform(this.dpr * z, 0, 0, this.dpr * z, this.dpr * v.tx, this.dpr * v.ty);
     TOWNS.forEach((t, i) => {
       let fill = '#1f2733';
       if (st.mode === 'site') fill = vs30Color(t.vs30);
       else { const n = st.townInts?.[i]; if (n && n !== '0') fill = INTENSITY_COLORS[n]; }
       ctx.fillStyle = fill; ctx.fill(this.townPaths[i]);
     });
-    ctx.strokeStyle = 'rgba(10,12,16,.55)'; ctx.lineWidth = 0.5;
-    this.townPaths.forEach(p => ctx.stroke(p));
-    ctx.strokeStyle = 'rgba(226,232,240,.55)'; ctx.lineWidth = 1.1; ctx.stroke(this.countyPath);
-    ctx.strokeStyle = 'rgba(226,232,240,.75)'; ctx.lineWidth = 1.2; ctx.stroke(this.coastPath);
+    ctx.strokeStyle = 'rgba(10,12,16,.55)'; ctx.lineWidth = 0.5 / z;
+    ctx.stroke(this.townBorders);
+    ctx.strokeStyle = 'rgba(226,232,240,.55)'; ctx.lineWidth = 1.1 / z; ctx.stroke(this.countyPath);
+    ctx.strokeStyle = 'rgba(226,232,240,.75)'; ctx.lineWidth = 1.2 / z; ctx.stroke(this.coastPath);
+    if (st.homeTown != null) { ctx.strokeStyle = '#2dd4bf'; ctx.lineWidth = 2.2 / z; ctx.stroke(this.townPaths[st.homeTown]); }
+    if (st.hoverTown != null) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.8 / z; ctx.stroke(this.townPaths[st.hoverTown]); }
+    ctx.restore();
 
-    // 我的鄉鎮、滑鼠所在鄉鎮
-    if (st.homeTown != null) { ctx.strokeStyle = '#2dd4bf'; ctx.lineWidth = 2.2; ctx.stroke(this.townPaths[st.homeTown]); }
-    if (st.hoverTown != null) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.8; ctx.stroke(this.townPaths[st.hoverTown]); }
+    // 放大到 3 倍以上時標示鄉鎮名稱
+    if (z >= 3) {
+      ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.font = `${Math.min(13, 6 + z)}px "Noto Sans TC"`; ctx.textAlign = 'center';
+      for (const t of TOWNS) { const [x, y] = P(t.c[0], t.c[1]); if (x > 0 && x < w && y > 0 && y < h) ctx.fillText(t.name, x, y + 14); }
+      ctx.textAlign = 'left';
+    }
 
     // P / S 波：實線＋半透明填色。圓心＝目前推算的震央與發震時間；
     // 每次新一報改變震央，圓心就跟著移動（第一報之前不畫）
@@ -109,13 +148,32 @@ export class TaiwanMap {
       ctx.beginPath(); ctx.moveTo(x - 18, y); ctx.lineTo(x + 18, y); ctx.moveTo(x, y - 18); ctx.lineTo(x, y + 18); ctx.stroke();
     }
 
-    // 測站（觸發後依觀測震度上色）
+    // 測站：▲ 陸上站、◆ 海底站；實測到震度後陸上站顯示級數（5 弱→5-、5 強→5+…）；被排除的誤觸發畫 ✕
+    const sz = Math.min(1.8, 0.8 + z * 0.2);
     for (const s of STATIONS) {
       const [x, y] = P(s.lon, s.lat);
+      if (x < -10 || y < -10 || x > w + 10 || y > h + 10) continue;
       const obs = st.stationInts?.get(s.name);
-      ctx.beginPath(); ctx.moveTo(x, y - 5); ctx.lineTo(x + 4.5, y + 3.5); ctx.lineTo(x - 4.5, y + 3.5); ctx.closePath();
-      ctx.fillStyle = obs ? (INTENSITY_COLORS[obs] ?? '#e5e7eb') : '#0b0e13'; ctx.fill();
-      ctx.strokeStyle = obs ? '#fff' : '#94a3b8'; ctx.lineWidth = 1; ctx.stroke();
+      if (st.rejected?.has(s.name)) {
+        ctx.strokeStyle = '#9ca3af'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(x - 4, y - 4); ctx.lineTo(x + 4, y + 4); ctx.moveTo(x + 4, y - 4); ctx.lineTo(x - 4, y + 4); ctx.stroke();
+        continue;
+      }
+      if (obs && obs !== '0' && s.type === 'land') {
+        const label = shortInt(obs), bw = (label.length > 1 ? 15 : 11) * sz, bh = 11 * sz;
+        ctx.fillStyle = INTENSITY_COLORS[obs]; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.roundRect(x - bw / 2, y - bh / 2, bw, bh, 3); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#0b0e13'; ctx.font = `bold ${Math.round(9 * sz)}px "JetBrains Mono", monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(label, x, y + 0.5); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+        continue;
+      }
+      const hit = st.picked?.has(s.name), r = 3.6 * sz;
+      ctx.beginPath();
+      if (s.type === 'obs') { ctx.moveTo(x, y - r - 1); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r + 1); ctx.lineTo(x - r, y); }
+      else { ctx.moveTo(x, y - r); ctx.lineTo(x + r, y + r * 0.75); ctx.lineTo(x - r, y + r * 0.75); }
+      ctx.closePath();
+      ctx.fillStyle = obs ? INTENSITY_COLORS[obs] : hit ? '#facc15' : s.type === 'obs' ? '#0c2a4a' : '#0b0e13'; ctx.fill();
+      ctx.strokeStyle = s.type === 'obs' ? '#60a5fa' : hit ? '#fff' : '#6b7280'; ctx.lineWidth = 1; ctx.stroke();
     }
 
     // 我的位置
@@ -135,6 +193,9 @@ export class TaiwanMap {
     }
   }
 }
+
+// 測站顯示用：5弱→5-、5強→5+、6弱→6-、6強→6+
+export const shortInt = n => n.replace('弱', '-').replace('強', '+');
 
 function star(ctx, x, y, R, r, color) {
   ctx.beginPath();

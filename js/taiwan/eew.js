@@ -64,7 +64,46 @@ export function createScenario(q, t0) {
       pga, pgv: predictPGV(q.M, R) * site.ampV * scatter,
     };
   });
+  // 誤觸發：隨機 2～4 個測站在地震前後被雜訊（車輛、施工、儀器故障）觸發
+  const nFalse = 2 + Math.floor(Math.random() * 3);
+  for (let k = 0; k < nFalse; k++) {
+    const s = stations[Math.floor(Math.random() * stations.length)];
+    const tf = t0 - 6000 + Math.random() * 20000;
+    if (tf < s.tp - 1500) { s.falseTp = tf; s.falseAmp = 0.3 + Math.random() * 3; }
+  }
   return { q: { ...q, t0 }, stations };
+}
+
+// 測站觸發時間：真的 P 波，或更早的誤觸發
+export function triggerOf(s) {
+  if (s.falseTp != null && s.falseTp < s.tp) return { tp: s.falseTp, pAmp: s.falseAmp, isFalse: true };
+  return { tp: s.tp, pAmp: s.pAmp, isFalse: false };
+}
+
+// ---- 關聯（防誤報）----
+// 1. 鄰站確認：一個觸發必須在 30 km 內有另一站，且到時差 ≤ 兩站距離 ÷ P 波速度 + 0.5 秒，才算「可信」。
+//    真的地震波一定會傳到附近測站；單站雜訊不會。測站越密，確認越快。
+// 2. 波前是連續擴散的：從一個可信觸發出發，只吸收「距離群組內某站 60 km 內、且與群組每站到時相容」的觸發，
+//    逐步擴張。遠方的雜訊即使時間上說得通，也不會被併入。取最大的群組。
+const compatible = (a, b, slack) => Math.abs(a.tp - b.tp) <= (distKm(a.lon, a.lat, b.lon, b.lat) / VP) * 1000 + slack;
+export const MIN_ISSUE = 3; // 至少 3 站互相確認才發布（防誤報）
+export function associate(picks, { radius = 30, slack = 200, grow = 60 } = {}) {
+  const confirmed = picks.filter(p => picks.some(q => q !== p && distKm(p.lon, p.lat, q.lon, q.lat) <= radius && compatible(p, q, slack)));
+  if (confirmed.length < 2) return [];
+  let best = [];
+  for (const seed of confirmed) {
+    const group = [seed];
+    let added = true;
+    while (added) {
+      added = false;
+      for (const p of confirmed) {
+        if (group.includes(p)) continue;
+        if (group.some(q => distKm(p.lon, p.lat, q.lon, q.lat) <= grow) && group.every(q => compatible(p, q, 500))) { group.push(p); added = true; }
+      }
+    }
+    if (group.length > best.length || (group.length === best.length && Math.max(...group.map(p => p.tp)) > Math.max(...best.map(p => p.tp)))) best = group;
+  }
+  return best.sort((a, b) => a.tp - b.tp);
 }
 
 // ---- 定位：網格搜尋（粗 → 細）----
@@ -95,21 +134,48 @@ function searchGrid(picks, idle, now, lonR, latR, step, depths) {
   return best;
 }
 
+// 穩健定位：關聯 → 定位 → 剔除殘差 > 1 秒的觸發 → 再定位
+// 回傳 { ...解, used: 採用的觸發, rejected: 被排除的觸發 }
+export function locateRobust(allPicks, idle, now) {
+  let used = associate(allPicks);
+  if (used.length < MIN_ISSUE) return null;
+  let sol = locate(used.slice(0, 25), nearIdle(idle, used[0]), now);
+  // 少站時逐一剔除檢驗：拿掉某個觸發後若明顯更一致（殘差＋「該到未到」懲罰下降一半以上），就視為誤觸發
+  if (used.length <= 6 && sol.cost > 300) {
+    for (let i = 0; i < used.length && used.length > MIN_ISSUE; i++) {
+      const sub = used.filter((_, j) => j !== i);
+      const s2 = locate(sub, nearIdle(idle.concat([used[i]]), sub[0]), now);
+      if (s2.cost < sol.cost * 0.5 && sol.cost > 300) { used = sub; sol = s2; i = -1; }
+    }
+  }
+  for (let iter = 0; iter < 2; iter++) { // 剔除殘差 > 0.7 秒的觸發後重新定位
+    const res = used.map(p => Math.abs(p.tp - sol.t0 - (Math.hypot(distKm(sol.lon, sol.lat, p.lon, p.lat), sol.depth) / VP) * 1000));
+    const kept = used.filter((_, i) => res[i] <= 700);
+    if (kept.length < MIN_ISSUE || kept.length === used.length) break;
+    used = kept; sol = locate(used.slice(0, 25), nearIdle(idle, used[0]), now);
+  }
+  return { ...sol, n: used.length, used, rejected: allPicks.filter(p => !used.includes(p)) };
+}
+// 「尚未觸發」約束只考慮離第一站最近的 40 個未觸發測站（加快運算）
+const nearIdle = (idle, first) => idle.map(s => [distKm(s.lon, s.lat, first.lon, first.lat), s])
+  .filter(([d]) => d < 150).sort((a, b) => a[0] - b[0]).slice(0, 40).map(([, s]) => s);
+
 // picks：已觸發測站（依到時排序）；idle：尚未觸發的測站；now：目前時間
 export function locate(picks, idle = [], now = picks[picks.length - 1]?.tp) {
   if (!picks.length) return null;
   const many = picks.length >= 4;
   // 粗搜尋：0.1°；4 站以上才同時解深度，少站時固定 10 km
-  const coarse = searchGrid(picks, idle, now, [119.0, 123.0], [21.0, 26.5], 0.1, many ? [5, 10, 20, 30, 50, 75, 100] : [10]);
+  const f = picks[0], box = 1.4; // 震央一定在第一站附近（P 波最先到），只搜尋 ±1.4°
+  const coarse = searchGrid(picks, idle, now, [Math.max(118.5, f.lon - box), Math.min(123.5, f.lon + box)], [Math.max(20.5, f.lat - box), Math.min(26.5, f.lat + box)], 0.1, many ? [5, 10, 20, 30, 50, 75, 100] : picks.length === 3 ? [10, 30, 60] : [10]);
   // 細搜尋：在最佳點附近 0.01°
-  const depths = []; if (many) { for (let d = Math.max(2, coarse.depth - 15); d <= coarse.depth + 15; d += 2) depths.push(d); } else depths.push(10);
+  const depths = []; if (picks.length === 3) { for (let d = Math.max(4, coarse.depth - 10); d <= coarse.depth + 10; d += 5) depths.push(d); } else if (many) { for (let d = Math.max(2, coarse.depth - 15); d <= coarse.depth + 15; d += 2) depths.push(d); } else depths.push(10);
   const fine = searchGrid(picks, idle, now, [coarse.lon - 0.12, coarse.lon + 0.12], [coarse.lat - 0.12, coarse.lat + 0.12], 0.01, depths);
-  // 規模：每站由 P 波振幅反推，取平均
+  // 規模：每站由 P 波振幅反推（先扣掉該站的場址放大），取中位數以排除離群值
   const Ms = picks.map(p => {
     const R = Math.hypot(distKm(fine.lon, fine.lat, p.lon, p.lat), fine.depth);
-    // 先扣掉該站的場址放大，再反推規模
     return (Math.log10(p.pAmp / P_RATIO / (p.site?.ampA ?? 1)) - 1.39 + 1.5 * Math.log10(R + 10) + 0.002 * R) / 0.5;
-  });
-  const M = Ms.reduce((a, b) => a + b, 0) / Ms.length;
+  }).sort((a, b) => a - b);
+  const mid = Ms.length >> 1;
+  const M = Ms.length % 2 ? Ms[mid] : (Ms[mid - 1] + Ms[mid]) / 2;
   return { ...fine, M: Math.round(M * 10) / 10, n: picks.length };
 }

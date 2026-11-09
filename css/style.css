@@ -144,6 +144,46 @@ td a { color: #a5b4fc; text-decoration: none; } td a:hover { text-decoration: un
 .drop-ico { font-size: 1.6rem; color: var(--accent2); }
 .drop u { color: #a5b4fc; text-decoration: none; margin-left: 2px; }
 
+/* ---------- Taiwan EEW ---------- */
+.tw-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
+.field select { padding: 8px 10px; border-radius: 9px; border: 1px solid var(--panel-b); background: rgba(2,6,23,.6); color: var(--fg); font: inherit; }
+.btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+.tw-note { font-size: .78rem; }
+.tw-body { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; }
+.tw-map-wrap { position: relative; border-radius: 12px; background: radial-gradient(circle at 60% 40%, rgba(30,58,138,.25), rgba(2,6,23,.7)); border: 1px solid rgba(148,163,184,.08); overflow: hidden; }
+#twMap { width: 100%; height: 600px; display: block; }
+.tw-legend { position: absolute; right: 10px; bottom: 34px; display: grid; gap: 2px; font-size: .7rem; }
+.tw-legend div { display: flex; align-items: center; gap: 6px; color: var(--mut); }
+.tw-legend i { width: 16px; height: 10px; border-radius: 2px; }
+.tw-keys { position: absolute; left: 10px; top: 8px; display: flex; gap: 12px; font-size: .75rem; color: var(--mut); flex-wrap: wrap; }
+.tw-keys i { display: inline-block; width: 16px; height: 0; border-top: 2px dashed #60a5fa; vertical-align: middle; margin-right: 4px; }
+.tw-keys i.ks { border-top: 2px solid #f43f5e; }
+.kstar { color: #f43f5e; }
+.tw-side { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.tw-table { max-height: 300px; overflow-y: auto; }
+.tw-table tr.me td { background: rgba(94,234,212,.1); font-weight: 700; }
+.eew-card { border-radius: 14px; padding: 16px; background: rgba(2,6,23,.55); border: 1px solid var(--panel-b); font-size: .9rem; }
+.eew-card .muted { line-height: 1.6; }
+.eew-card.waiting { border-color: rgba(96,165,250,.5); }
+.eew-card.notice { border-color: rgba(251,146,60,.7); background: linear-gradient(160deg, rgba(251,146,60,.16), rgba(2,6,23,.6)); }
+.eew-card.severe { border-color: #f43f5e; background: linear-gradient(160deg, rgba(244,63,94,.28), rgba(2,6,23,.6)); box-shadow: 0 0 40px -12px rgba(244,63,94,.8); }
+.eew-head { display: flex; justify-content: space-between; align-items: center; }
+.eew-title { font-size: 1.3rem; font-weight: 800; letter-spacing: .08em; }
+.eew-no { padding: 2px 10px; border-radius: 99px; background: rgba(255,255,255,.12); font-size: .8rem; }
+.eew-sub { color: var(--mut); font-size: .75rem; margin: 4px 0 10px; }
+.eew-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.eew-card .k { color: var(--mut); font-size: .75rem; }
+.eew-card .v { font-size: 1.6rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.eew-card small { font-size: .8rem; color: var(--mut); margin-left: 4px; font-weight: 500; }
+.eew-epi { margin: 8px 0 12px; font-size: .85rem; }
+.eew-home { display: grid; grid-template-columns: 1fr 1.2fr; gap: 10px; padding: 12px; border-radius: 12px; background: rgba(2,6,23,.5); }
+.eew-int { font-size: 3rem; font-weight: 900; line-height: 1.1; text-shadow: 0 0 24px currentColor; }
+.eew-sec { font-size: 3rem; font-weight: 900; line-height: 1.1; font-variant-numeric: tabular-nums; color: #fff; }
+.eew-count.arrived .eew-sec { color: var(--danger); font-size: 2rem; }
+.eew-local { margin-top: 10px; font-size: .8rem; color: #5eead4; }
+.eew-truth { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--panel-b); font-size: .8rem; line-height: 1.7; color: var(--mut); }
+.eew-truth b { color: var(--fg); }
+
 footer { text-align: center; color: var(--mut); font-size: .8rem; padding-top: 8px; }
 footer a { color: #a5b4fc; }
 
@@ -151,6 +191,8 @@ footer a { color: #a5b4fc; }
 @media (max-width: 1000px) {
   .kpis { grid-template-columns: 1fr 1fr; }
   .two { grid-template-columns: 1fr; }
+  .tw-body { grid-template-columns: 1fr; }
+  #twMap { height: 520px; }
 }
 @media (max-width: 600px) {
   main, .topbar { padding-left: 16px; padding-right: 16px; }

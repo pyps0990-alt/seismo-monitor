@@ -56,12 +56,13 @@
         <div class="k">估計震度</div>
         <div class="big"><span id="intNow">–</span><small>級</small></div>
         <div class="scale" id="scale"></div>
-        <div class="u">中央氣象署分級 · 5 弱以上為 PGA 粗估</div>
+        <div class="u">中央氣象署 2020 新制 · 4 級以上依 PGV 判定</div>
       </article>
       <article class="panel kpi">
         <div class="k">即時 PGA</div>
         <div class="v"><span id="pgaNow">–</span><small>gal</small></div>
         <canvas id="spark" class="spark" height="44"></canvas>
+        <div class="u">PGV <b id="pgvNow">–</b> cm/s</div>
       </article>
       <article class="panel kpi">
         <div class="k">STA / LTA</div>
@@ -85,12 +86,38 @@
       <canvas id="live" class="wave" height="440"></canvas>
     </section>
 
+    <section class="panel tw">
+      <div class="panel-head">
+        <h2>台灣地震速報模擬</h2>
+        <div class="muted"><span id="twElapsed"></span> <span id="twPicks"></span></div>
+      </div>
+      <div class="tw-controls">
+        <label class="field"><span>情境</span><select id="twPreset"></select></label>
+        <label class="field"><span>我的位置</span><select id="twHome"></select></label>
+        <button id="twStart" class="btn primary">🌏 發生地震</button>
+        <span class="muted tw-note">虛擬測站網 <span id="twN"></span> 站 ·本機網格搜尋定位 · 簡化衰減式預測</span>
+      </div>
+      <div class="tw-body">
+        <div class="tw-map-wrap">
+          <canvas id="twMap"></canvas>
+          <div class="tw-legend" id="twLegend"></div>
+          <div class="tw-keys"><span><i class="kp"></i>P 波</span><span><i class="ks"></i>S 波</span><span>▲ 測站</span><span class="kstar">★ 推算震央</span></div>
+        </div>
+        <div class="tw-side">
+          <div id="eewCard" class="eew-card"></div>
+          <div class="table-wrap tw-table">
+            <table><thead><tr><th>縣市</th><th>預估震度</th><th>S 波抵達</th></tr></thead><tbody id="twTable"></tbody></table>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <div class="two">
       <section class="panel">
         <div class="panel-head"><h2>事件紀錄</h2><span class="muted" id="evCount">尚無事件</span></div>
         <div class="table-wrap">
           <table id="events">
-            <thead><tr><th>時間</th><th>最大 PGA</th><th>震度</th><th>持續</th><th>檔案</th></tr></thead>
+            <thead><tr><th>時間</th><th>PGA</th><th>PGV</th><th>震度</th><th>持續</th><th>檔案</th></tr></thead>
             <tbody></tbody>
           </table>
           <div class="empty" id="evEmpty">偵測到震動後，事件前後 30 秒的資料會自動存檔並列在這裡。</div>

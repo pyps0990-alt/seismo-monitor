@@ -24,10 +24,18 @@ export class SimulatorSource {
   stop() { clearInterval(this.timer); this.timer = null; }
 
   // 注入一次模擬地震：P 波先到、S 波較強，振幅隨機（gal 數量級 5~120）
-  injectQuake() {
-    const t0 = Date.now() + 500;
-    const peak = (5 + Math.random() * 115) / 100; // m/s²
-    this.quakes.push({ t0, sp: 2000 + Math.random() * 3000, peak, dur: 8000 + Math.random() * 8000 });
+  // 也可指定參數（台灣地震模擬用）：t0 = P 波到達時間、sp = S−P 時間差 (ms)、
+  // peak = S 波最大加速度 (m/s²)、freq = S 波主頻 (Hz)、dur = 持續時間 (ms)
+  injectQuake(opts = {}) {
+    const q = {
+      t0: Date.now() + 500,
+      sp: 2000 + Math.random() * 3000,
+      peak: (5 + Math.random() * 115) / 100,
+      freq: 2.1,
+      dur: 8000 + Math.random() * 8000,
+      ...opts,
+    };
+    this.quakes.push(q);
   }
 
   sample(t) {
@@ -43,9 +51,10 @@ export class SimulatorSource {
       const ss = s - q.sp / 1000;
       if (ss > 0) {
         const sEnv = Math.min(1, ss * 2) * Math.exp(-ss / (q.dur / 4000));
-        x += q.peak * sEnv * Math.sin(2 * Math.PI * 2.1 * ss) * (0.8 + 0.2 * Math.sin(ss * 7));
-        y += 0.7 * q.peak * sEnv * Math.sin(2 * Math.PI * 1.6 * ss + 1);
-        z += 0.3 * q.peak * sEnv * Math.sin(2 * Math.PI * 3 * ss);
+        const f = q.freq;
+        x += q.peak * sEnv * Math.sin(2 * Math.PI * f * ss) * (0.8 + 0.2 * Math.sin(ss * 7));
+        y += 0.7 * q.peak * sEnv * Math.sin(2 * Math.PI * f * 0.76 * ss + 1);
+        z += 0.3 * q.peak * sEnv * Math.sin(2 * Math.PI * f * 1.4 * ss);
       }
     }
     this.quakes = this.quakes.filter(q => t - q.t0 < q.sp + q.dur * 2);

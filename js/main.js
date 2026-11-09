@@ -3,6 +3,7 @@ import { WebSocketSource } from './sources/websocket.js';
 import { Detector, intensity, INTENSITY_COLORS, INTENSITY_NAMES } from './detector.js';
 import { LongRecorder, EventRecorder, parseCsv } from './recorder.js';
 import { drawWaves, drawSpark } from './chart.js';
+import { TaiwanEEW } from './taiwan/sim.js';
 
 const $ = id => document.getElementById(id);
 const WINDOW_MS = 20000;
@@ -69,6 +70,7 @@ function connect() {
   detector = new Detector({ rate: 100, threshold: Number($('thr').value) });
   detector.onTrigger = ev => {
     eventRec.begin(ev); beep();
+    tw.onLocalTrigger(ev.start);
     marks.push({ t: ev.start, label: '觸發' });
     $('alert').hidden = false;
     $('alertText').textContent = ` ${new Date(ev.start).toLocaleTimeString()} 起，正在記錄事件資料…`;
@@ -96,9 +98,9 @@ function disconnect() {
 }
 
 eventRec.onSaved = (ev, name, url) => {
-  const n = intensity(ev.pga);
+  const n = intensity(ev.pga, ev.pgv);
   const tr = document.createElement('tr');
-  tr.innerHTML = `<td>${new Date(ev.start).toLocaleString()}</td><td>${ev.pga.toFixed(1)} gal</td>
+  tr.innerHTML = `<td>${new Date(ev.start).toLocaleString()}</td><td>${ev.pga.toFixed(1)} gal</td><td>${ev.pgv.toFixed(1)} cm/s</td>
     <td><span class="badge" style="background:${INTENSITY_COLORS[n]}">${n}</span></td>
     <td>${((ev.end - ev.start) / 1000).toFixed(1)} 秒</td><td></td>`;
   const a = Object.assign(document.createElement('a'), { href: url, download: name, textContent: '⤓ CSV' , title: name });
@@ -138,10 +140,10 @@ async function loadReplay(file) {
   const dt = (raw[raw.length - 1].t - raw[0].t) / Math.max(1, raw.length - 1);
   const d = new Detector({ rate: Math.round(1000 / dt) || 100 });
   const f = raw.map(s => d.process(s));
-  let peak = f[0];
-  for (const s of f) if (s.pga > peak.pga) peak = s;
-  const n = intensity(peak.pga);
-  $('replayInfo').innerHTML = `${file.name} · ${((raw[raw.length - 1].t - raw[0].t) / 1000).toFixed(1)} 秒 · 最大 PGA <b>${peak.pga.toFixed(1)}</b> gal <span class="badge" style="background:${INTENSITY_COLORS[n]}">${n}</span>`;
+  let peak = f[0], pgv = 0;
+  for (const s of f) { if (s.pga > peak.pga) peak = s; if (s.pgv > pgv) pgv = s.pgv; }
+  const n = intensity(peak.pga, pgv);
+  $('replayInfo').innerHTML = `${file.name} · ${((raw[raw.length - 1].t - raw[0].t) / 1000).toFixed(1)} 秒 · PGA <b>${peak.pga.toFixed(1)}</b> gal · PGV <b>${pgv.toFixed(1)}</b> cm/s <span class="badge" style="background:${INTENSITY_COLORS[n]}">${n}</span>`;
   $('replay').hidden = false;
   drawWaves($('replay'), f, f[0].t, f[f.length - 1].t, { marks: [{ t: peak.t, label: `最大 ${peak.pga.toFixed(1)} gal` }] });
 }
@@ -151,6 +153,22 @@ const drop = $('drop');
 ['dragleave', 'drop'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', ev => ev.dataTransfer.files[0] && loadReplay(ev.dataTransfer.files[0]));
 
+// ---- 台灣地震速報模擬 ----
+const tw = new TaiwanEEW({
+  sound: () => $('sound').checked,
+  onQuake: params => {
+    // 本站改用模擬資料，讓你的「地震儀」也收到這次地震
+    if (!(source instanceof SimulatorSource)) {
+      if (source) disconnect();
+      document.querySelector('.seg-btn[data-src="sim"]').click();
+      connect();
+    }
+    source.injectQuake(params);
+  },
+});
+$('twLegend').innerHTML = INTENSITY_NAMES.slice(1).reverse()
+  .map(n => `<div><i style="background:${INTENSITY_COLORS[n]}"></i>${n}</div>`).join('');
+
 // ---- 繪圖迴圈 ----
 function frame() {
   const now = Date.now();
@@ -158,9 +176,11 @@ function frame() {
   marks = marks.filter(m => now - m.t < WINDOW_MS);
   drawWaves($('live'), live, now - WINDOW_MS, now, { smooth: true, marks });
   if (detector) {
-    const pga = peakWindow.reduce((m, s) => Math.max(m, s.pga), 0);
+    let pga = 0, pgv = 0;
+    for (const s of peakWindow) { if (s.pga > pga) pga = s.pga; if (s.pgv > pgv) pgv = s.pgv; }
     $('pgaNow').textContent = pga.toFixed(1);
-    showIntensity(intensity(pga));
+    $('pgvNow').textContent = pgv.toFixed(2);
+    showIntensity(intensity(pga, pgv));
     const r = detector.ratio ?? 0, thr = detector.threshold, full = thr * 2;
     $('ratioNow').textContent = r.toFixed(1);
     $('ratioBar').style.width = Math.min(100, (r / full) * 100) + '%';
@@ -169,6 +189,7 @@ function frame() {
     if (now - sparkT > 250) { sparkT = now; sparkVals.push(pga); if (sparkVals.length > 120) sparkVals.shift(); }
     drawSpark($('spark'), sparkVals, pga >= 8 ? '#fb923c' : '#818cf8');
   }
+  tw.tick(now);
   if (longRec.active) $('recRows').textContent = `${longRec.rows.toLocaleString()} 筆`;
   const p = performance.now();
   if (p - rateT > 1000) { $('rateNow').textContent = source ? Math.round(rateCount * 1000 / (p - rateT)) : '–'; rateCount = 0; rateT = p; }

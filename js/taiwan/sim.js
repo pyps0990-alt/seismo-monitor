@@ -1,23 +1,23 @@
 // 台灣地震速報模擬：情境時間軸 → 測站觸發 → 本機定位 → 發布速報 → 區塊震度與倒數
 import { COUNTIES, BLOCKS, STATIONS, describeEpicenter, distKm } from './geo.js';
-import { createScenario, locate, predictIntensity, predictPGA, predictPGV, dominantFreq, randomQuake, PRESETS, VS } from './eew.js';
+import { createScenario, locate, predictIntensity, predictPGA, predictPGV, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
 import { INTENSITY_COLORS, intensity, intensityIndex } from '../detector.js';
 import { TaiwanMap } from './map.js';
 
 const $ = id => document.getElementById(id);
-const MIN_STATIONS = 4;       // 定位所需最少測站數
-const PROCESS_MS = 1500;      // 第 4 站觸發後的運算＋發布延遲
+const PROCESS_MS = 500;       // 每次觸發後的運算＋發布延遲
+const MAX_REPORTS = 10;
 const END_MS = 75000;         // 情境總長
 
 const badge = n => `<span class="badge" style="background:${INTENSITY_COLORS[n]}">${n}</span>`;
+const hhmmss = t => new Date(t).toLocaleTimeString('zh-TW', { hour12: false });
 
 export class TaiwanEEW {
   constructor({ onQuake, sound }) {
     this.map = new TaiwanMap($('twMap'));
     this.onQuake = onQuake;   // (參數) => 把本站要收到的地震波送進模擬器
     this.sound = sound;
-    this.sc = null; this.sol = null; this.report = 0;
-    this.localPick = null;
+    this.sc = null;
 
     $('twN').textContent = STATIONS.length;
     $('twPreset').innerHTML = '<option value="rand">隨機情境</option>' + PRESETS.map((p, i) => `<option value="${i}">${p.name}（M${p.M}）</option>`).join('');
@@ -34,20 +34,16 @@ export class TaiwanEEW {
     const q = v === 'rand' ? randomQuake() : { ...PRESETS[+v] };
     const t0 = Date.now() + 1500;
     this.sc = createScenario(q, t0);
-    this.sol = null; this.report = 0; this.lastN = 0; this.firstIssued = null; this.localPick = null; this.reveal = false; this.alarmed = false;
-    this.blockInts = null;
+    Object.assign(this, { sol: null, report: 0, lastN: 0, firstIssued: null, localPick: null, reveal: false,
+      blockInts: null, nSeen: 0, lastTick: null, arrived: false, lastHomeInt: null });
 
     // 把「我的位置」收到的地震波送進本站模擬器（P、S 到時與振幅都依距離計算）
     const h = this.home;
     const R = Math.hypot(distKm(h.lon, h.lat, q.lon, q.lat), q.depth);
-    const tp = t0 + (R / 6.0) * 1000, ts = t0 + (R / VS) * 1000;
+    const tp = t0 + (R / VP) * 1000, ts = t0 + (R / VS) * 1000;
     this.homeTruth = { pga: predictPGA(q.M, R), pgv: predictPGV(q.M, R), ts };
-    this.onQuake({
-      t0: tp, sp: ts - tp,
-      peak: this.homeTruth.pga / 100 / 1.15,
-      freq: dominantFreq(q.M),
-      dur: 6000 + (q.M - 4) * 5000,
-    });
+    this.onQuake({ t0: tp, sp: ts - tp, peak: this.homeTruth.pga / 100 / 1.15, freq: dominantFreq(q.M), dur: 6000 + (q.M - 4) * 5000 });
+
     $('twStart').disabled = true;
     $('eewCard').className = 'eew-card waiting';
     $('eewCard').innerHTML = `<div class="eew-title">監測中…</div><div class="muted">地震已發生（模擬），等待測站偵測 P 波</div>`;
@@ -55,34 +51,71 @@ export class TaiwanEEW {
 
   // 本站（你的地震儀）偵測到 P 波時由 main.js 呼叫
   onLocalTrigger(t) {
-    if (!this.sc || this.localPick) return;
+    if (!this.sc || this.localPick) return false;
     this.localPick = t;
+    return true;
+  }
+  get active() { return !!this.sc && !this.reveal; }
+
+  // 目前已觸發的測站：模擬到時已過者；本站若由你的地震儀先偵測到，就用實際偵測時間
+  currentPicks(now) {
+    const home = this.home.name;
+    return this.sc.stations.map(s => {
+      if (s.name === home && this.localPick && this.localPick < s.tp) return { ...s, tp: this.localPick };
+      return s;
+    }).filter(s => s.tp <= now).sort((a, b) => a.tp - b.tp);
   }
 
   tick(now) {
     if (!this.sc) { this.map.draw({ now, home: this.home }); return; }
     const sc = this.sc;
-    const picks = sc.stations.filter(s => s.tp <= now).sort((a, b) => a.tp - b.tp);
+    const picks = this.currentPicks(now);
     const picked = new Set(picks.map(p => p.name));
+    if (picks.length > this.nSeen && !this.reveal) { this.nSeen = picks.length; this.sound.stationPing(); }
 
-    // 有新測站觸發，且已達定位門檻 → 重新定位並發布新一報（最多 6 報）
-    if (picks.length >= MIN_STATIONS && now >= picks[MIN_STATIONS - 1].tp + PROCESS_MS
-        && picks.length > this.lastN && this.report < 6 && (this.report === 0 || picks.length - this.lastN >= 3)) {
+    // 第 1 站偵測到 P 波就開始定位；4 站以內每多一站更新一報，之後每多 3 站更新
+    const n = picks.length;
+    if (n && now >= picks[n - 1].tp + PROCESS_MS && n > this.lastN && this.report < MAX_REPORTS
+        && (n <= 5 || n - this.lastN >= 3)) {
+      const idle = sc.stations.filter(s => !picked.has(s.name));
       const t = performance.now();
-      this.sol = locate(picks);
+      const prevInt = this.sol ? this.homeInt(this.sol) : null;
+      this.sol = locate(picks, idle, now);
       this.sol.calcMs = performance.now() - t;
       this.sol.issued = now;
-      if (!this.firstIssued) this.firstIssued = now;
-      this.lastN = picks.length;
+      this.lastN = n;
       this.report++;
       this.blockInts = BLOCKS.map(b => predictIntensity(this.sol.M, Math.hypot(distKm(b.lon, b.lat, this.sol.lon, this.sol.lat), this.sol.depth)));
-      if (!this.alarmed) { this.alarmed = true; this.alarm(); }
+      this.announce(now, prevInt);
     }
 
     if (!this.reveal && now - sc.q.t0 > END_MS) { this.reveal = true; $('twStart').disabled = false; }
     this.map.draw({ scenario: sc, now, solution: this.sol, blockInts: this.blockInts, picked, home: this.home, reveal: this.reveal });
-    this.render(now, picks.length);
+    this.render(now, n);
     if (this.reveal && now - sc.q.t0 > END_MS + 60000) { this.sc = null; this.renderIdle(); }
+  }
+
+  homeInt(so) {
+    const h = this.home;
+    const R = Math.hypot(distKm(h.lon, h.lat, so.lon, so.lat), so.depth);
+    return { n: predictIntensity(so.M, R), ts: so.t0 + (R / VS) * 1000 };
+  }
+
+  // 速報音效與語音
+  announce(now, prev) {
+    const so = this.sol, hi = this.homeInt(so);
+    const sec = Math.ceil((hi.ts - now) / 1000);
+    const place = describeEpicenter(so.lon, so.lat).match(/（位於(.+)）/)?.[1] ?? '';
+    const when = sec > 0 ? `，約 ${sec} 秒後抵達` : '';
+    if (this.report === 1) {
+      this.firstIssued = now;
+      const severe = intensityIndex(hi.n) >= intensityIndex('4');
+      const d = this.sound.eewAlarm(severe);
+      this.sound.speak(`地震速報。${place}發生地震，預估規模 ${so.M.toFixed(1)}。${this.home.name}預估震度 ${hi.n} 級${when}。`, d);
+    } else {
+      this.sound.update();
+      if (prev && prev.n !== hi.n && sec > 2) this.sound.speak(`更新，${this.home.name}預估震度 ${hi.n} 級${when}。`, 0.3);
+    }
   }
 
   render(now, nPicks) {
@@ -91,20 +124,27 @@ export class TaiwanEEW {
     const so = this.sol;
     if (!so) return;
     const h = this.home;
-    const hR = Math.hypot(distKm(h.lon, h.lat, so.lon, so.lat), so.depth);
-    const hInt = predictIntensity(so.M, hR);
-    const hS = so.t0 + (hR / VS) * 1000;
+    const { n: hInt, ts: hS } = this.homeInt(so);
     const left = (hS - now) / 1000;
-    const lead = (hS - this.firstIssued) / 1000; // 預警時間：第一報發布到 S 波抵達
+    const lead = (hS - this.firstIssued) / 1000;
     const big = intensityIndex(hInt) >= intensityIndex('4');
 
+    // 倒數音效
+    const sec = Math.ceil(left);
+    if (!this.reveal && sec !== this.lastTick) {
+      this.lastTick = sec;
+      if (sec > 0 && sec <= 10) this.sound.tick(sec);
+      if (sec <= 0 && !this.arrived) { this.arrived = true; this.sound.rumble(); }
+    }
+
+    const quality = so.n < 4 ? `<span class="eew-q">${so.n} 站速估 · 誤差較大</span>` : `<span class="eew-q ok">${so.n} 站定位</span>`;
     $('eewCard').className = 'eew-card ' + (big ? 'severe' : 'notice');
     $('eewCard').innerHTML = `
       <div class="eew-head"><span class="eew-title">地震速報</span><span class="eew-no">第 ${this.report} 報</span></div>
-      <div class="eew-sub">${new Date(so.issued).toLocaleTimeString('zh-TW', { hour12: false })} 發布 · ${so.n} 站定位 · 本機運算 ${so.calcMs.toFixed(0)} ms</div>
+      <div class="eew-sub">${hhmmss(so.issued)} 發布 · ${quality} · 本機運算 ${so.calcMs.toFixed(0)} ms</div>
       <div class="eew-grid">
         <div><div class="k">預估規模</div><div class="v">M ${so.M.toFixed(1)}</div></div>
-        <div><div class="k">深度</div><div class="v">${so.depth.toFixed(0)} <small>km</small></div></div>
+        <div><div class="k">深度</div><div class="v">${so.n < 4 ? '—' : so.depth.toFixed(0)} <small>${so.n < 4 ? '待定' : 'km'}</small></div></div>
       </div>
       <div class="eew-epi">震央：${describeEpicenter(so.lon, so.lat)}</div>
       <div class="eew-home">
@@ -114,11 +154,11 @@ export class TaiwanEEW {
         </div>
         <div class="eew-count ${left <= 0 ? 'arrived' : ''}">
           <div class="k">${left > 0 ? '主震波（S 波）抵達倒數' : '主震波已抵達'}</div>
-          <div class="eew-sec">${left > 0 ? Math.ceil(left) : (lead <= 0 ? '盲區' : '0')}<small>${left > 0 ? '秒' : ''}</small></div>
+          <div class="eew-sec">${left > 0 ? sec : (lead <= 0 ? '盲區' : '0')}<small>${left > 0 ? '秒' : ''}</small></div>
           <div class="muted">預警時間 ${lead > 0 ? lead.toFixed(1) + ' 秒' : '無（位於盲區）'}</div>
         </div>
       </div>
-      <div class="eew-local">${this.localPick ? `✔ 本站地震儀於 ${new Date(this.localPick).toLocaleTimeString('zh-TW', { hour12: false })} 偵測到 P 波` : '本站地震儀尚未偵測到震動'}</div>
+      <div class="eew-local">${this.localPick ? `✔ 本站地震儀於 ${hhmmss(this.localPick)} 偵測到 P 波` : '本站地震儀尚未偵測到震動'}</div>
       ${this.reveal ? this.truthHtml() : ''}`;
 
     // 縣市預估表
@@ -144,20 +184,6 @@ export class TaiwanEEW {
     $('twTable').innerHTML = `<tr><td colspan="3" class="muted">尚無速報</td></tr>`;
     $('eewCard').className = 'eew-card';
     $('eewCard').innerHTML = `<div class="eew-title">待命中</div><div class="muted">選擇情境與你的位置，按「發生地震」開始模擬。<br>
-      至少 ${MIN_STATIONS} 個測站偵測到 P 波後，本機會計算震央並發布速報。</div>`;
-  }
-
-  alarm() {
-    if (!this.sound()) return;
-    try {
-      const ac = new AudioContext();
-      for (let i = 0; i < 6; i++) {
-        const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime + i * 0.32;
-        o.type = 'square'; o.frequency.value = i % 2 ? 660 : 990;
-        o.connect(g); g.connect(ac.destination);
-        g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-        o.start(t); o.stop(t + 0.3);
-      }
-    } catch { /* 尚未允許音效 */ }
+      第 1 個測站偵測到 P 波就會開始估算震央與規模，測站越多越準。</div>`;
   }
 }

@@ -4,6 +4,7 @@ import { Detector, intensity, INTENSITY_COLORS, INTENSITY_NAMES } from './detect
 import { LongRecorder, EventRecorder, parseCsv } from './recorder.js';
 import { drawWaves, drawSpark } from './chart.js';
 import { TaiwanEEW } from './taiwan/sim.js';
+import { Sound } from './sound.js';
 
 const $ = id => document.getElementById(id);
 const WINDOW_MS = 20000;
@@ -51,26 +52,15 @@ function onSamples(batch) {
   while (peakWindow.length && tNow - peakWindow[0].t > 1000) peakWindow.shift();
 }
 
-function beep() {
-  if (!$('sound').checked) return;
-  try {
-    const ac = new AudioContext();
-    [0, 0.25, 0.5].forEach(d => {
-      const o = ac.createOscillator(), g = ac.createGain();
-      o.type = 'triangle'; o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
-      g.gain.setValueAtTime(0.25, ac.currentTime + d); g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + d + 0.2);
-      o.start(ac.currentTime + d); o.stop(ac.currentTime + d + 0.2);
-    });
-  } catch { /* 瀏覽器尚未允許播放音效 */ }
-}
+const sound = new Sound(() => $('sound').checked);
 
 function connect() {
   const kind = $('sourceSel').value;
   source = kind === 'sim' ? new SimulatorSource({ rate: 100 }) : new WebSocketSource($('wsUrl').value.trim());
   detector = new Detector({ rate: 100, threshold: Number($('thr').value) });
   detector.onTrigger = ev => {
-    eventRec.begin(ev); beep();
-    tw.onLocalTrigger(ev.start);
+    eventRec.begin(ev);
+    if (tw.onLocalTrigger(ev.start)) sound.localP(); else sound.trigger();
     marks.push({ t: ev.start, label: '觸發' });
     $('alert').hidden = false;
     $('alertText').textContent = ` ${new Date(ev.start).toLocaleTimeString()} 起，正在記錄事件資料…`;
@@ -155,7 +145,7 @@ drop.addEventListener('drop', ev => ev.dataTransfer.files[0] && loadReplay(ev.da
 
 // ---- 台灣地震速報模擬 ----
 const tw = new TaiwanEEW({
-  sound: () => $('sound').checked,
+  sound,
   onQuake: params => {
     // 本站改用模擬資料，讓你的「地震儀」也收到這次地震
     if (!(source instanceof SimulatorSource)) {

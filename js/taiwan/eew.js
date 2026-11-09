@@ -61,30 +61,42 @@ export function createScenario(q, t0) {
 }
 
 // ---- 定位：網格搜尋（粗 → 細）----
-function searchGrid(picks, lonR, latR, step, depths) {
+// 代價 = 已觸發測站的走時殘差 RMS
+//      + 「尚未觸發」約束：若某格點預測某站 P 波早該到了、但該站還沒觸發，就加罰
+//      + 少站時（< 3 站）加一點「靠近第一站」的先驗，讓單站也能給出最合理的位置
+// 這樣第 1 個測站偵測到 P 波就能開始估算，之後每多一站，可能的範圍就縮小。
+function searchGrid(picks, idle, now, lonR, latR, step, depths) {
   let best = null;
+  const n = picks.length, first = picks[0];
   for (let lon = lonR[0]; lon <= lonR[1]; lon += step) {
     for (let lat = latR[0]; lat <= latR[1]; lat += step) {
       for (const depth of depths) {
         const tt = picks.map(p => (Math.hypot(distKm(lon, lat, p.lon, p.lat), depth) / VP) * 1000);
         // 發震時間的最佳估計 = 平均（到時 − 走時）
-        let t0 = 0; for (let i = 0; i < picks.length; i++) t0 += picks[i].tp - tt[i]; t0 /= picks.length;
-        let ss = 0; for (let i = 0; i < picks.length; i++) { const r = picks[i].tp - tt[i] - t0; ss += r * r; }
-        const rms = Math.sqrt(ss / picks.length);
-        if (!best || rms < best.rms) best = { lon, lat, depth, t0, rms };
+        let t0 = 0; for (let i = 0; i < n; i++) t0 += picks[i].tp - tt[i]; t0 /= n;
+        let ss = 0; for (let i = 0; i < n; i++) { const r = picks[i].tp - tt[i] - t0; ss += r * r; }
+        let cost = Math.sqrt(ss / n);
+        for (const s of idle) {
+          const late = now - (t0 + (Math.hypot(distKm(lon, lat, s.lon, s.lat), depth) / VP) * 1000);
+          if (late > 0) cost += late;
+        }
+        if (n < 3) cost += 2 * distKm(lon, lat, first.lon, first.lat);
+        if (!best || cost < best.cost) best = { lon, lat, depth, t0, cost };
       }
     }
   }
   return best;
 }
 
-export function locate(picks) {
-  if (picks.length < 4) return null;
-  // 粗搜尋：0.1°，深度 5～100 km
-  const coarse = searchGrid(picks, [119.0, 123.0], [21.0, 26.5], 0.1, [5, 10, 20, 30, 50, 75, 100]);
-  // 細搜尋：在最佳點附近 0.01°，深度每 2 km
-  const depths = []; for (let d = Math.max(2, coarse.depth - 15); d <= coarse.depth + 15; d += 2) depths.push(d);
-  const fine = searchGrid(picks, [coarse.lon - 0.12, coarse.lon + 0.12], [coarse.lat - 0.12, coarse.lat + 0.12], 0.01, depths);
+// picks：已觸發測站（依到時排序）；idle：尚未觸發的測站；now：目前時間
+export function locate(picks, idle = [], now = picks[picks.length - 1]?.tp) {
+  if (!picks.length) return null;
+  const many = picks.length >= 4;
+  // 粗搜尋：0.1°；4 站以上才同時解深度，少站時固定 10 km
+  const coarse = searchGrid(picks, idle, now, [119.0, 123.0], [21.0, 26.5], 0.1, many ? [5, 10, 20, 30, 50, 75, 100] : [10]);
+  // 細搜尋：在最佳點附近 0.01°
+  const depths = []; if (many) { for (let d = Math.max(2, coarse.depth - 15); d <= coarse.depth + 15; d += 2) depths.push(d); } else depths.push(10);
+  const fine = searchGrid(picks, idle, now, [coarse.lon - 0.12, coarse.lon + 0.12], [coarse.lat - 0.12, coarse.lat + 0.12], 0.01, depths);
   // 規模：每站由 P 波振幅反推，取平均
   const Ms = picks.map(p => {
     const R = Math.hypot(distKm(fine.lon, fine.lat, p.lon, p.lat), fine.depth);

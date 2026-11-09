@@ -1,5 +1,5 @@
 // 台灣地圖繪製：區塊震度、測站、P/S 波前、震央
-import { OUTLINE, BLOCKS, BLOCK, BOUNDS, STATIONS, COUNTIES } from './geo.js';
+import { LAND, BLOCKS, BLOCK, BOUNDS, STATIONS, COUNTIES } from './geo.js';
 import { INTENSITY_COLORS } from '../detector.js';
 import { VP, VS } from './eew.js';
 
@@ -36,7 +36,7 @@ export class TaiwanMap {
 
     // 區塊
     const [bx0, by0] = P(0, 0), [bx1, by1] = P(BLOCK, BLOCK);
-    const bw = Math.abs(bx1 - bx0) - 1.2, bh = Math.abs(by1 - by0) - 1.2;
+    const bw = Math.abs(bx1 - bx0) - 0.8, bh = Math.abs(by1 - by0) - 0.8;
     BLOCKS.forEach((b, i) => {
       const [x, y] = P(b.lon, b.lat);
       const n = st.blockInts?.[i];
@@ -46,10 +46,13 @@ export class TaiwanMap {
     });
     ctx.globalAlpha = 1;
 
-    // 海岸線
-    ctx.beginPath();
-    OUTLINE.forEach(([lon, lat], i) => { const [x, y] = P(lon, lat); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-    ctx.strokeStyle = 'rgba(226,232,240,.45)'; ctx.lineWidth = 1.2; ctx.stroke();
+    // 海岸線（本島＋外島）
+    for (const poly of LAND) {
+      ctx.beginPath();
+      poly.forEach(([lon, lat], i) => { const [x, y] = P(lon, lat); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.closePath();
+      ctx.strokeStyle = 'rgba(226,232,240,.6)'; ctx.lineWidth = 1.1; ctx.stroke();
+    }
 
     // 波前（以真實震源繪製：這是模擬世界的實際物理）
     const sc = st.scenario;

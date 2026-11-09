@@ -171,6 +171,8 @@ td a { color: #a5b4fc; text-decoration: none; } td a:hover { text-decoration: un
 .eew-title { font-size: 1.3rem; font-weight: 800; letter-spacing: .08em; }
 .eew-no { padding: 2px 10px; border-radius: 99px; background: rgba(255,255,255,.12); font-size: .8rem; }
 .eew-sub { color: var(--mut); font-size: .75rem; margin: 4px 0 10px; }
+.eew-q { padding: 1px 8px; border-radius: 99px; background: rgba(251,146,60,.2); color: #fdba74; }
+.eew-q.ok { background: rgba(74,222,128,.15); color: #86efac; }
 .eew-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .eew-card .k { color: var(--mut); font-size: .75rem; }
 .eew-card .v { font-size: 1.6rem; font-weight: 800; font-variant-numeric: tabular-nums; }

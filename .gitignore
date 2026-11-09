@@ -1,4 +1,5 @@
 node_modules/
+data/usgs/cache/
 *.csv
 target/
 .DS_Store

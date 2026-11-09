@@ -1,6 +1,6 @@
 // 台灣地震速報模擬：自訂／預設地震 → 測站觸發 → 本機定位 → 發布速報（一般／緊急）→ 鄉鎮震度預測與倒數
 import { COUNTIES, STATIONS, TOWNS, loadTowns, townAt, describeEpicenter, distKm } from './geo.js';
-import { createScenario, locateRobust, triggerOf, predictAt, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
+import { createScenario, locateRobust, triggerOf, predictAt, loadModel, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
 import { siteOf, siteClass } from './site.js';
 import { INTENSITY_COLORS, intensity, intensityIndex } from '../detector.js';
 import { TaiwanMap } from './map.js';
@@ -32,7 +32,10 @@ export class TaiwanEEW {
   }
 
   async init() {
-    await loadTowns();
+    const [, model] = await Promise.all([loadTowns(), loadModel()]);
+    $('twModel').textContent = model
+      ? `預估式：USGS 實測訓練（${model.data.events} 個地震、${model.data.records} 筆紀錄）`
+      : '預估式：手設教學模型';
     for (const t of TOWNS) Object.assign(t, siteOf(t.c[0], t.c[1]));
     $('twN').textContent = STATIONS.length;
     $('twPreset').innerHTML = '<option value="">— 預設情境 —</option>' + PRESETS.map((p, i) => `<option value="${i}">${p.name}（M${p.M}）</option>`).join('');
@@ -98,7 +101,7 @@ export class TaiwanEEW {
     const h = this.home;
     const R = Math.hypot(distKm(h.lon, h.lat, q.lon, q.lat), q.depth);
     const tp = t0 + (R / VP) * 1000, ts = t0 + (R / VS) * 1000;
-    this.homeTruth = predictAt(q.M, R, h.site);
+    this.homeTruth = predictAt(q.M, R, h.site, q.depth);
     this.onQuake({ t0: tp, sp: ts - tp, peak: this.homeTruth.pga / 100 / 1.15, freq: dominantFreq(q.M), dur: 6000 + (q.M - 4) * 5000 });
 
     $('twStart').disabled = true;
@@ -158,7 +161,7 @@ export class TaiwanEEW {
         this.sol.issued = now;
         this.lastUsed = sol.n; this.lastReportN = n; this.report++;
         this.rejected = new Set(sol.rejected.map(p => p.name));
-        this.townInts = TOWNS.map(tw => predictAt(this.sol.M, hypo(tw.c[0], tw.c[1], this.sol), tw).n);
+        this.townInts = TOWNS.map(tw => predictAt(this.sol.M, hypo(tw.c[0], tw.c[1], this.sol), tw, this.sol.depth).n);
         // 最大預估震度：陸地鄉鎮中的最大值
         let mi = 0; this.townInts.forEach((v, i) => { if (intensityIndex(v) > intensityIndex(this.townInts[mi])) mi = i; });
         this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
@@ -166,6 +169,7 @@ export class TaiwanEEW {
         this.follow();
       }
     }
+    this.follow(now); // 每一幀更新追蹤目標（跟著 S 波擴散縮小）
     // 速報等級也可能在兩報之間因測站實測震度升級
     if (this.sol && !this.reveal && this.level === 'normal' && this.isEmergency()) this.announce(now, null, true);
 
@@ -177,17 +181,25 @@ export class TaiwanEEW {
   }
 
   // 自動追蹤：每一報把地圖飛到推算震央；規模越大顯示範圍越廣（倍率越小）
-  follow() {
-    if (!$('twFollow').checked || this.map.userMoved || !this.sol) return;
-    const z = Math.min(4, Math.max(1.6, 4.5 - (this.sol.M - 5) * 1.2));
-    this.map.flyTo(this.sol.lon, this.sol.lat, z);
+  // 並隨 S 波擴散逐漸縮小，讓整個 S 波圓保持在畫面內；縮得越小，中心越往台灣本島中央移
+  follow(now = Date.now()) {
+    if (!$('twFollow').checked || this.map.userMoved || !this.sol || this.reveal) return;
+    const so = this.sol;
+    const zMag = Math.min(4, Math.max(1.6, 4.5 - (so.M - 5) * 1.2));
+    const el = Math.max(0, (now - so.t0) / 1000);
+    const rs = Math.sqrt(Math.max(0, (VS * el) ** 2 - so.depth ** 2));      // S 波地表半徑（km）
+    const c = this.map.canvas, fitPx = 0.42 * Math.min(c.clientWidth, c.clientHeight);
+    const zFit = rs > 0 && this.map.baseKmPx ? fitPx / (rs * this.map.baseKmPx) : zMag;
+    const z = Math.max(1, Math.min(zMag, zFit));
+    const k = zMag > 1 ? (zMag - z) / (zMag - 1) : 1;                      // 0＝震央置中，1＝台灣置中
+    this.map.flyTo(so.lon + (120.95 - so.lon) * k, so.lat + (23.65 - so.lat) * k, z);
   }
 
   isEmergency() { return this.sol.M > EMERGENCY_M && intensityIndex(this.maxObs) >= intensityIndex(EMERGENCY_INT); }
 
   homePred(so) {
     const h = this.home, R = hypo(h.lon, h.lat, so);
-    return { ...predictAt(so.M, R, h.site), ts: so.t0 + (R / VS) * 1000 };
+    return { ...predictAt(so.M, R, h.site, so.depth), ts: so.t0 + (R / VS) * 1000 };
   }
 
   // 語音格式：「N 級地震，N 秒後抵達」
@@ -300,7 +312,7 @@ export class TaiwanEEW {
     const sc = siteClass(t.vs30);
     let pred = '';
     if (this.sol && this.townInts) {
-      const r = predictAt(this.sol.M, hypo(t.c[0], t.c[1], this.sol), t);
+      const r = predictAt(this.sol.M, hypo(t.c[0], t.c[1], this.sol), t, this.sol.depth);
       pred = `<div>預估震度 ${badge(r.n)} PGA ${r.pga.toFixed(0)} gal · PGV ${r.pgv.toFixed(1)} cm/s</div>`;
     }
     tip.innerHTML = `<b>${t.county} ${t.name}</b><div>Vs30 ≈ ${t.vs30} m/s · ${sc.name}</div><div>地盤放大 PGA ×${t.ampA.toFixed(2)}、PGV ×${t.ampV.toFixed(2)}</div>${pred}`;

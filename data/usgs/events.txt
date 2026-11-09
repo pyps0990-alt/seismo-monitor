@@ -1,0 +1,150 @@
+usp0009t2k M5.4 29 km NNE of Puli, Taiwan：0 站
+usp0009ucq M6.4 29 km ESE of Puli, Taiwan：0 站
+usp0009xbp M5.7 Taiwan：0 站
+usp0009zzx M5.8 8 km WNW of Hualien City, Taiwan：0 站
+usp000agks M5.9 39 km SE of Yilan, Taiwan：0 站
+usp000ausw M6.8 62 km SSW of Yonakuni, Japan：0 站
+usp000ay9n M5.7 29 km S of Hualien City, Taiwan：0 站
+usp000b1e2 M7.1 67 km ENE of Hualien City, Taiwan：0 站
+usp000b4bg M6.2 21 km SE of Yilan, Taiwan：0 站
+usp000b54k M6.1 67 km E of Hualien City, Taiwan：0 站
+usp000batm M5.6 86 km E of Hengchun, Taiwan：0 站
+usp000bcbx M5.5 Taiwan region：0 站
+usp000bzef M5.8 46 km SE of Yilan, Taiwan：0 站
+usp000bzhv M6 50 km S of Hualien City, Taiwan：0 站
+usp000c015 M5.5 49 km S of Hualien City, Taiwan：0 站
+usp000cexg M6.8 92 km E of Yujing, Taiwan：0 站
+usp000cezx M5.5 112 km NE of Hengchun, Taiwan：0 站
+usp000ctwv M5.2 11 km N of Hualien City, Taiwan：0 站
+usp000cueg M5.6 89 km E of Hengchun, Taiwan：0 站
+usp000cvj3 M6.2 107 km NE of Hengchun, Taiwan：0 站
+usp000d6dm M6.7 31 km WNW of Yonakuni, Japan：0 站
+usp000d7yk M6.3 61 km SW of Yonakuni, Japan：0 站
+usp000d84b M5.7 61 km SE of Yilan, Taiwan：0 站
+usp000dhkn M5.7 22 km SE of Yilan, Taiwan：0 站
+usp000dhkp M5.7 17 km ESE of Yilan, Taiwan：0 站
+usp000ede6 M6.1 88 km ESE of Yujing, Taiwan：0 站
+usp000eemh M5.9 99 km ESE of Yujing, Taiwan：0 站
+usp000f114 M7.1 30 km SW of Hengchun, Taiwan：0 站
+usp000f115 M6.9 26 km W of Hengchun, Taiwan：0 站
+usp000f13b M5.6 27 km W of Hengchun, Taiwan：0 站
+usp000f3jg M6 136 km ENE of Hengchun, Taiwan：0 站
+usp000fmjx M6.2 66 km SE of Yilan, Taiwan：0 站
+usp000g4nm M6 121 km S of Hualien City, Taiwan：0 站
+usp000gz7c M6.3 61 km E of Hualien City, Taiwan：0 站
+usp000h2b0 M6.1 41 km SSW of Hualien City, Taiwan：0 站
+usp000h3s7 M5.6 1 km SSW of Lugu, Taiwan：0 站
+usp000h3sd M5.2 13 km SE of Lugu, Taiwan：0 站
+usp000h56g M6.4 20 km S of Hualien City, Taiwan：0 站
+usp000h8nd M6.3 41 km SE of Yujing, Taiwan：0 站
+usp000hpxr M5.6 17 km SSE of Hualien City, Taiwan：0 站
+usp000jfd0 M5.9 50 km ENE of Donggang, Taiwan：3 站
+usp000jmdc M5.5 80 km ENE of Hengchun, Taiwan：0 站
+usp000jmjm M5.9 54 km ESE of Yilan, Taiwan：0 站
+usb000fgws M5.5 38 km NNW of Hualien City, Taiwan：0 站
+usb000ftgc M5.9 29 km ESE of Puli, Taiwan：4 站
+usb000hbrt M6.2 26 km SE of Puli, Taiwan：5 站
+usc000hib7 M5.8 無 stationlist
+usb000i34l M5.7 無 stationlist
+usc000ksdy M6.3 46 km SSW of Hualien City, Taiwan：0 站
+usc000ngte M5.8 無 stationlist
+usb000qxnd M5.6 Taiwan：0 站
+usc000t5bu M6.1 77 km NE of Jiufen, Taiwan：5 站
+usb000tp6y M6.2 Taiwan region：1 站
+us10001ps8 M5.5 Taiwan：1 站
+us200027ps M6.4 75 km WSW of Yonakuni, Japan：2 站
+us200027rt M6 69 km SW of Yonakuni, Japan：5 站
+us200027ru M6.1 72 km SW of Yonakuni, Japan：4 站
+us100031xw M5.6 75 km SW of Yonakuni, Japan：0 站
+us2000417s M5.5 125 km NE of Hengchun, Taiwan：3 站
+us10004fhj M5.6 92 km ESE of Yujing, Taiwan：1 站
+us20004y6h M6.4 25 km SE of Yujing, Taiwan：49 站
+us10005bxy M5.5 34 km NE of Hualien City, Taiwan：0 站
+us10005gpt M5.8 24 km ESE of Yilan, Taiwan：2 站
+us10005gq4 M5.7 31 km ESE of Yilan, Taiwan：4 站
+us20005zay M6.4 Taiwan region：1 站
+us20007ccf M5.8 99 km NE of Hengchun, Taiwan：1 站
+us10007c5s M5.3 71 km SW of Yonakuni, Japan：0 站
+us20008izc M5.3 18 km S of Tainan, Taiwan：4 站
+us1000cfn6 M6.1 22 km NNE of Hualien City, Taiwan：83 站
+us1000cfnf M5.5 23 km NE of Hualien City, Taiwan：0 站
+us1000chhc M6.4 18 km NNE of Hualien City, Taiwan：1 站
+us1000ci9y M5.7 17 km NE of Hualien City, Taiwan：1 站
+us1000hfxx M5.8 56 km SW of Yonakuni, Japan：5 站
+us1000hg5i M5.7 61 km SSW of Yonakuni, Japan：5 站
+us1000jc88 M5.4 89 km NE of Hengchun, Taiwan：4 站
+us2000k9g3 M5.4 53 km ESE of Yujing, Taiwan：6 站
+us700038c1 M6.1 8 km NE of Hualien City, Taiwan：1 站
+us70003v7s M5.5 119 km S of Hualien City, Taiwan：82 站
+us6000522g M5.8 35 km SSE of Yilan, Taiwan：92 站
+us70007qtx M5.3 15 km S of Hualien City, Taiwan：85 站
+us6000abge M5.4 56 km WSW of Yonakuni, Japan：0 站
+us7000cpqz M6.1 27 km E of Yilan, Taiwan：111 站
+us6000dedv M5.4 123 km N of Basco, Philippines：0 站
+us6000df68 M5.4 45 km NW of Yonakuni, Japan：0 站
+us6000dfmm M5.2 50 km SE of Yilan, Taiwan：1 站
+us7000detx M5.5 57 km E of Hengchun, Taiwan：0 站
+us6000e2mt M5.5 21 km S of Hualien City, Taiwan：93 站
+us6000e2mv M5.8 15 km SSW of Hualien City, Taiwan：103 站
+us7000ejb6 M5.1 14 km SSE of Hualien City, Taiwan：72 站
+us6000et0h M5.1 13 km SSE of Hualien City, Taiwan：78 站
+us6000f29v M5.8 56 km E of Yilan, Taiwan：0 站
+us6000fx56 M6.2 28 km SSE of Yilan, Taiwan：0 站
+us7000g8n3 M6.2 66 km E of Hualien City, Taiwan：10 站
+us7000gk21 M5.3 69 km E of Hualien City, Taiwan：1 站
+us6000h39z M5.2 80 km SSW of Hualien City, Taiwan：82 站
+us6000h6nr M6.7 65 km S of Hualien City, Taiwan：127 站
+us6000h6rn M5.9 62 km S of Hualien City, Taiwan：0 站
+us6000h6s3 M5.5 52 km S of Hualien City, Taiwan：1 站
+us6000h6sl M5.8 63 km S of Hualien City, Taiwan：1 站
+us7000h0jz M5.7 45 km SE of Hengchun, Taiwan：0 站
+us7000h82f M6.2 70 km SW of Yonakuni, Japan：5 站
+us7000him8 M5.9 38 km SSW of Hualien City, Taiwan：91 站
+us7000hkud M5.3 44 km W of Hengchun, Taiwan：0 站
+us7000i8ui M6.5 96 km SE of Lugu, Taiwan：17 站
+us7000i8v9 M5.5 Taiwan region：1 站
+us7000i903 M5.6 87 km E of Yujing, Taiwan：1 站
+us7000i90q M6.9 90 km E of Yujing, Taiwan：22 站
+us7000i928 M5.9 80 km SE of Lugu, Taiwan：0 站
+us7000i96l M5.5 68 km SSW of Hualien City, Taiwan：1 站
+us6000isjn M5.5 69 km E of Hualien City, Taiwan：1 站
+us7000ilnl M5 50 km NW of Yonakuni, Japan：1 站
+us6000j9by M5.9 31 km SE of Hualien City, Taiwan：1 站
+us6000kr0e M5.6 85 km E of Hengchun, Taiwan：0 站
+us7000l5vd M5.9 59 km SW of Yonakuni, Japan：1 站
+us7000m9g4 M7.4 15 km S of Hualien City, Taiwan：347 站
+us7000m9gc M6.4 15 km NNE of Hualien City, Taiwan：71 站
+us7000m9gh M5.6 21 km NNE of Hualien City, Taiwan：1 站
+us7000m9gm M5.3 2 km NNW of Hualien City, Taiwan：0 站
+us7000m9gp M5.6 24 km NNE of Hualien City, Taiwan：0 站
+us7000m9h9 M5.3 28 km SE of Hualien City, Taiwan：1 站
+us7000mbfv M5.7 27 km SE of Hualien City, Taiwan：0 站
+us7000m9hp M5.7 41 km NE of Hualien City, Taiwan：1 站
+us6000muy0 M5 28 km S of Hualien City, Taiwan：3 站
+us7000mdti M5.6 30 km S of Hualien City, Taiwan：1 站
+us7000mduw M5.8 27 km S of Hualien City, Taiwan：101 站
+us6000mt0r M6.1 29 km S of Hualien City, Taiwan：1 站
+us6000mt0s M6.1 13 km SSW of Hualien City, Taiwan：1 站
+us6000mt1n M5.5 35 km S of Hualien City, Taiwan：2 站
+us6000mt1q M5.4 35 km S of Hualien City, Taiwan：3 站
+us6000mt22 M5.4 22 km SSE of Hualien City, Taiwan：5 站
+us6000mt3f M5.8 22 km SSE of Hualien City, Taiwan：1 站
+us6000mu3y M5.7 20 km NNE of Hualien City, Taiwan：5 站
+us6000mu45 M5.2 29 km NNE of Hualien City, Taiwan：1 站
+us6000mwnf M5.6 28 km S of Hualien City, Taiwan：1 站
+us6000mwnh M5.2 27 km S of Hualien City, Taiwan：4 站
+us6000mxpi M5.8 38 km NE of Hualien City, Taiwan：3 站
+us7000n74c M5.4 46 km SSE of Yilan, Taiwan：4 站
+us7000n7b8 M6.1 30 km SSE of Hualien City, Taiwan：116 站
+us6000pl8h M6 10 km NE of Yujing, Taiwan：2 站
+us6000pmct M5.2 2 km SW of Yujing, Taiwan：1 站
+us7000p9yj M5.1 12 km ENE of Yujing, Taiwan：0 站
+us7000px8h M5.6 37 km ESE of Hualien City, Taiwan：0 站
+us6000qjj5 M5.9 67 km S of Hualien City, Taiwan：1 站
+us6000qyt7 M5.5 16 km NNW of Yonakuni, Japan：7 站
+us7000rkjm M6 2025 Taitung, Taiwan Earthquake：1 站
+us7000rl2n M6.6 29 km ESE of Yilan, Taiwan：1 站
+us6000smlu M5.2 4 km NNE of Hualien City, Taiwan：0 站
+us7000shjp M5.8 32 km ENE of Yilan, Taiwan：77 站
+us6000tnbm M5.5 114 km NE of Hengchun, Taiwan：2 站
+us6000tyhk M5.5 75 km S of Yonakuni, Japan：2 站

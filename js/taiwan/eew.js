@@ -10,17 +10,33 @@ import { siteOf } from './site.js';
 export const VP = 6.0;  // P 波速度 km/s（地殼平均，簡化）
 export const VS = 3.5;  // S 波速度 km/s
 
-// ---- 簡化衰減式（教學用，非中央氣象署正式模型）----
-// log10(PGA[gal]) = 1.39 + 0.5·M − 1.5·log10(R + 10) − 0.002·R，R 為震源距離（km）
-export function predictPGA(M, R) { return 10 ** (1.39 + 0.5 * M - 1.5 * Math.log10(R + 10) - 0.002 * R); }
-// PGV ≈ PGA × 10^(0.2M − 2.1)：規模越大，主頻越低，同樣加速度下速度越大
-export function predictPGV(M, R) { return predictPGA(M, R) * 10 ** (0.2 * M - 2.1); }
-// 對應的 S 波主頻（給模擬器產生波形用）：PGV = PGA / (2πf)
-export function dominantFreq(M) { return 1 / (2 * Math.PI * 10 ** (0.2 * M - 2.1)); }
-export const predictIntensity = (M, R) => intensity(predictPGA(M, R), predictPGV(M, R));
-// 加入場址放大（site = {ampA, ampV}）
-export function predictAt(M, R, site) {
-  const pga = predictPGA(M, R) * site.ampA, pgv = predictPGV(M, R) * site.ampV;
+// ---- 地震動預估式 ----
+// 優先使用以 USGS 實測資料訓練的模型（data/model.json，由 tools/train-gmpe.mjs 產生）：
+//   log10(Y) = c0 + c1·M + c2·log10(R + h) + c3·R + c4·深度   （R 為震源距離 km）
+// 載入失敗時退回原本的手設教學模型。
+export let MODEL = null;
+export async function loadModel(url = 'data/model.json') {
+  try { MODEL = await (await fetch(url)).json(); } catch { MODEL = null; }
+  return MODEL;
+}
+const evalModel = (m, M, R, depth) => 10 ** (m.c[0] + m.c[1] * M + m.c[2] * Math.log10(R + m.h) + m.c[3] * R + m.c[4] * depth);
+export function predictPGA(M, R, depth = 10) {
+  if (MODEL) return evalModel(MODEL.pga, M, R, depth);
+  return 10 ** (1.39 + 0.5 * M - 1.5 * Math.log10(R + 10) - 0.002 * R);
+}
+export function predictPGV(M, R, depth = 10) {
+  if (MODEL) return evalModel(MODEL.pgv, M, R, depth);
+  return predictPGA(M, R) * 10 ** (0.2 * M - 2.1);
+}
+const magSlope = () => (MODEL ? MODEL.pga.c[1] : 0.5); // log10(PGA) 對規模的斜率（反推規模用）
+// 對應的 S 波主頻（給模擬器產生波形用）：PGV = PGA / (2πf)，以 30 km 處估算
+export function dominantFreq(M) { return predictPGA(M, 30) / (2 * Math.PI * predictPGV(M, 30)); }
+export const predictIntensity = (M, R, depth) => intensity(predictPGA(M, R, depth), predictPGV(M, R, depth));
+// 加入場址效應：地形推估放大（ampA/ampV）＋ 訓練得到的鄉鎮修正（site.id 為鄉鎮代碼）
+export function predictAt(M, R, site, depth = 10) {
+  const d = (site.id && MODEL?.siteDelta?.[site.id]) || { a: 0, v: 0 };
+  const pga = predictPGA(M, R, depth) * site.ampA * 10 ** d.a;
+  const pgv = predictPGV(M, R, depth) * site.ampV * 10 ** d.v;
   return { pga, pgv, n: intensity(pga, pgv) };
 }
 
@@ -55,13 +71,13 @@ export function createScenario(q, t0) {
     const R = hypoDist(s.lon, s.lat, q);
     const site = siteOf(s.lon, s.lat);                            // 地形場址效應
     const scatter = 10 ** (0.12 * gauss());                       // 其餘隨機變異
-    const pga = predictPGA(q.M, R) * site.ampA * scatter;
+    const pga = predictPGA(q.M, R, q.depth) * site.ampA * scatter;
     return {
       ...s, R, site,
       tp: t0 + (R / VP) * 1000 + gauss() * 60,                    // P 波到時 + 挑波誤差 ±60 ms
       ts: t0 + (R / VS) * 1000,
       pAmp: pga * P_RATIO * 10 ** (0.1 * gauss()),                // 觀測到的 P 波初期振幅
-      pga, pgv: predictPGV(q.M, R) * site.ampV * scatter,
+      pga, pgv: predictPGV(q.M, R, q.depth) * site.ampV * scatter,
     };
   });
   // 誤觸發：隨機 2～4 個測站在地震前後被雜訊（車輛、施工、儀器故障）觸發
@@ -173,7 +189,8 @@ export function locate(picks, idle = [], now = picks[picks.length - 1]?.tp) {
   // 規模：每站由 P 波振幅反推（先扣掉該站的場址放大），取中位數以排除離群值
   const Ms = picks.map(p => {
     const R = Math.hypot(distKm(fine.lon, fine.lat, p.lon, p.lat), fine.depth);
-    return (Math.log10(p.pAmp / P_RATIO / (p.site?.ampA ?? 1)) - 1.39 + 1.5 * Math.log10(R + 10) + 0.002 * R) / 0.5;
+    // 預估式對規模是線性的：log10(PGA) = log10(PGA@M=0) + 斜率·M → 反解 M
+    return (Math.log10(p.pAmp / P_RATIO / (p.site?.ampA ?? 1)) - Math.log10(predictPGA(0, R, fine.depth))) / magSlope();
   }).sort((a, b) => a - b);
   const mid = Ms.length >> 1;
   const M = Ms.length % 2 ? Ms[mid] : (Ms[mid - 1] + Ms[mid]) / 2;

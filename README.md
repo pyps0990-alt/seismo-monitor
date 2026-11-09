@@ -17,6 +17,16 @@
   衰減式為教學用簡化模型，非中央氣象署正式模型。
 - 「模擬地震」按鈕：產生 P 波 + S 波的測試訊號
 
+## 用真實資料訓練地震動預估式
+
+```bash
+node tools/fetch-usgs.mjs 5.0 2000   # 下載 USGS ShakeMap 台灣測站實測資料 → data/usgs/records.json
+node tools/train-gmpe.mjs            # 迴歸校正 PGA/PGV 預估式＋鄉鎮場址修正 → data/model.json
+```
+
+模型：`log10(Y) = c0 + c1·M + c2·log10(R+h) + c3·R + c4·深度 + 地形放大 + 鄉鎮修正`，
+以「依地震 5 折交叉驗證」評估（每筆紀錄都用沒看過該地震的模型預測），結果見 `data/model-report.txt`。
+
 ## 執行
 
 需要 Node.js（不需安裝任何套件）：

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seismo Monitor</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <h1>Seismo Monitor <small>地震監測</small></h1>
+    <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">未連線</span></div>
+  </header>
+
+  <section class="controls">
+    <label>資料來源
+      <select id="sourceSel">
+        <option value="sim">模擬資料</option>
+        <option value="ws">網路（ESP32 WebSocket）</option>
+      </select>
+    </label>
+    <label id="wsBox" hidden>位址 <input id="wsUrl" value="ws://192.168.4.1:81"></label>
+    <button id="btnConnect">開始</button>
+    <button id="btnQuake" class="warn">模擬地震</button>
+    <span class="sep"></span>
+    <button id="btnRecord">開始記錄 CSV</button>
+    <label>觸發門檻 STA/LTA <input id="thr" type="number" value="3" step="0.5" min="1.5" style="width:4em"></label>
+    <label><input id="sound" type="checkbox" checked> 提醒音效</label>
+  </section>
+
+  <section class="stats">
+    <div class="card"><div class="k">即時 PGA</div><div class="v" id="pgaNow">–</div><div class="u">gal</div></div>
+    <div class="card"><div class="k">估計震度</div><div class="v" id="intNow">–</div><div class="u">中央氣象署分級（估計）</div></div>
+    <div class="card"><div class="k">STA/LTA</div><div class="v" id="ratioNow">–</div><div class="u">最大軸</div></div>
+    <div class="card"><div class="k">取樣率</div><div class="v" id="rateNow">–</div><div class="u">Hz</div></div>
+    <div class="card"><div class="k">記錄</div><div class="v small" id="recNow">未記錄</div><div class="u" id="recRows"></div></div>
+  </section>
+
+  <div id="alert" class="alert" hidden></div>
+
+  <section>
+    <h2>即時波形（最近 20 秒，已去除重力／靜態偏移）</h2>
+    <canvas id="live" height="420"></canvas>
+  </section>
+
+  <section>
+    <h2>事件紀錄</h2>
+    <table id="events"><thead><tr><th>時間</th><th>最大 PGA (gal)</th><th>估計震度</th><th>持續 (s)</th><th>檔案</th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <section>
+    <h2>回看 CSV</h2>
+    <input type="file" id="fileIn" accept=".csv">
+    <span id="replayInfo"></span>
+    <canvas id="replay" height="360"></canvas>
+  </section>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+:root { --bg:#0f1419; --panel:#1a2129; --fg:#e6e6e6; --mut:#8a96a3; --x:#ff6b6b; --y:#51cf66; --z:#4dabf7; --warn:#ff922b; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font-family: "Microsoft JhengHei", system-ui, sans-serif; padding: 0 16px 40px; }
+header { display:flex; justify-content:space-between; align-items:center; }
+h1 small { color:var(--mut); font-size:.6em; margin-left:.4em; }
+h2 { font-size:1rem; color:var(--mut); margin:24px 0 8px; }
+.status { display:flex; gap:8px; align-items:center; }
+.dot { width:10px; height:10px; border-radius:50%; background:#555; }
+.dot.on { background:var(--y); } .dot.err { background:var(--x); }
+.controls { display:flex; flex-wrap:wrap; gap:12px; align-items:center; background:var(--panel); padding:12px; border-radius:8px; }
+.sep { flex:1; }
+button, select, input { background:#26303b; color:var(--fg); border:1px solid #34404d; border-radius:6px; padding:6px 10px; font:inherit; }
+button { cursor:pointer; } button:hover { background:#2f3b48; }
+button.warn { border-color:var(--warn); color:var(--warn); }
+button.active { background:var(--x); color:#fff; }
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:12px; }
+.card { background:var(--panel); padding:12px; border-radius:8px; }
+.card .k { color:var(--mut); font-size:.85em; } .card .v { font-size:1.8em; font-weight:bold; }
+.card .v.small { font-size:1.1em; } .card .u { color:var(--mut); font-size:.75em; }
+canvas { width:100%; background:var(--panel); border-radius:8px; display:block; }
+.alert { margin-top:12px; padding:14px; border-radius:8px; background:#5c1d1d; border:2px solid var(--x); font-size:1.2em; font-weight:bold; animation: blink 1s infinite alternate; }
+@keyframes blink { to { background:#3a1414; } }
+table { width:100%; border-collapse:collapse; background:var(--panel); border-radius:8px; overflow:hidden; }
+th, td { padding:8px; text-align:left; border-bottom:1px solid #2a333d; } th { color:var(--mut); font-weight:normal; }
+a { color:var(--z); }

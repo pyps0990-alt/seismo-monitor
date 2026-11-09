@@ -14,7 +14,8 @@ export class TaiwanMap {
     const local = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
 
     // 滾輪縮放（以游標為中心）
-    canvas.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = local(e); this.zoomAt(x, y, e.deltaY < 0 ? 1.25 : 0.8); }, { passive: false });
+    // 使用者自己縮放／拖曳時，停止自動追蹤（按 ⟲ 重設後恢復）
+    canvas.addEventListener('wheel', e => { e.preventDefault(); this.stopFly(); this.userMoved = true; const [x, y] = local(e); this.zoomAt(x, y, e.deltaY < 0 ? 1.25 : 0.8); }, { passive: false });
     // 拖曳平移；移動很少則視為點擊
     let drag = null;
     canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, tx: this.view.tx, ty: this.view.ty, moved: false }; canvas.setPointerCapture(e.pointerId); });
@@ -22,7 +23,7 @@ export class TaiwanMap {
       if (drag) {
         const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
         if (Math.hypot(dx, dy) > 4) drag.moved = true;
-        if (drag.moved) { this.view.tx = drag.tx + dx; this.view.ty = drag.ty + dy; canvas.style.cursor = 'grabbing'; onHover?.(null); return; }
+        if (drag.moved) { this.stopFly(); this.userMoved = true; this.view.tx = drag.tx + dx; this.view.ty = drag.ty + dy; canvas.style.cursor = 'grabbing'; onHover?.(null); return; }
       }
       onHover?.(this.toLonLat(e), e);
     });
@@ -31,13 +32,25 @@ export class TaiwanMap {
     canvas.addEventListener('dblclick', e => { const [x, y] = local(e); this.zoomAt(x, y, 2); });
   }
 
+  // 平滑飛到指定經緯度（置中）與倍率；動畫在每次 draw 時推進
+  flyTo(lon, lat, z) { this.target = { lon, lat, z }; }
+  stopFly() { this.target = null; }
+  stepFly(w, h) {
+    const t = this.target; if (!t || !this.base) return;
+    const [bx, by] = this.base(t.lon, t.lat);
+    const v = this.view, k = 0.12;
+    const tz = t.z, ttx = w / 2 - bx * tz, tty = h / 2 - by * tz;
+    v.z += (tz - v.z) * k; v.tx += (ttx - v.tx) * k; v.ty += (tty - v.ty) * k;
+    if (Math.abs(tz - v.z) < 0.005 && Math.abs(ttx - v.tx) < 0.5 && Math.abs(tty - v.ty) < 0.5) { v.z = tz; v.tx = ttx; v.ty = tty; this.target = null; }
+  }
+
   zoomAt(x, y, f) {
     const v = this.view, z = Math.min(16, Math.max(1, v.z * f)), k = z / v.z;
     v.tx = x - (x - v.tx) * k; v.ty = y - (y - v.ty) * k; v.z = z;
     if (z === 1) { v.tx = 0; v.ty = 0; }
   }
-  zoomBy(f) { this.zoomAt(this.canvas.clientWidth / 2, this.canvas.clientHeight / 2, f); }
-  reset() { this.view = { z: 1, tx: 0, ty: 0 }; }
+  zoomBy(f) { this.stopFly(); this.userMoved = true; this.zoomAt(this.canvas.clientWidth / 2, this.canvas.clientHeight / 2, f); }
+  reset() { this.target = null; this.userMoved = false; this.view = { z: 1, tx: 0, ty: 0 }; }
 
   toLonLat(e) {
     const r = this.canvas.getBoundingClientRect();
@@ -66,6 +79,7 @@ export class TaiwanMap {
       this.countyPath = new Path2D(); COUNTY_LINES.forEach(l => this.countyPath.addPath(path(l)));
       this.coastPath = new Path2D(); COAST.forEach(l => this.coastPath.addPath(path(l)));
     }
+    this.stepFly(w, h);
     const v = this.view;
     this.px = (lon, lat) => { const [x, y] = this.base(lon, lat); return [x * v.z + v.tx, y * v.z + v.ty]; };
     this.inv = (x, y) => this.baseInv((x - v.tx) / v.z, (y - v.ty) / v.z);

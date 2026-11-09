@@ -26,7 +26,8 @@ export class TaiwanEEW {
     });
     $('zIn').onclick = () => this.map.zoomBy(1.5);
     $('zOut').onclick = () => this.map.zoomBy(1 / 1.5);
-    $('zReset').onclick = () => this.map.reset();
+    $('zReset').onclick = () => { this.map.reset(); this.follow(); };
+    $('twFollow').onchange = () => { if ($('twFollow').checked) { this.map.userMoved = false; this.follow(); } };
     this.ready = this.init();
   }
 
@@ -102,6 +103,7 @@ export class TaiwanEEW {
 
     $('twStart').disabled = true;
     document.body.classList.add('quake-on');
+    this.map.userMoved = false; // 新地震重新開始自動追蹤
     $('eewCard').className = 'eew-card waiting';
     $('eewCard').innerHTML = `<div class="eew-kicker">監測中</div><div class="eew-title">等待測站偵測 P 波…</div>`;
   }
@@ -161,6 +163,7 @@ export class TaiwanEEW {
         let mi = 0; this.townInts.forEach((v, i) => { if (intensityIndex(v) > intensityIndex(this.townInts[mi])) mi = i; });
         this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
         this.announce(now, prev);
+        this.follow();
       }
     }
     // 速報等級也可能在兩報之間因測站實測震度升級
@@ -171,6 +174,13 @@ export class TaiwanEEW {
       home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, reveal: this.reveal, pickPoint: this.reveal ? this.readQuake() : null });
     this.render(now, n);
     if (this.reveal && now - sc.q.t0 > END_MS + 60000) { this.sc = null; this.renderIdle(); }
+  }
+
+  // 自動追蹤：每一報把地圖飛到推算震央；規模越大顯示範圍越廣（倍率越小）
+  follow() {
+    if (!$('twFollow').checked || this.map.userMoved || !this.sol) return;
+    const z = Math.min(4, Math.max(1.6, 4.5 - (this.sol.M - 5) * 1.2));
+    this.map.flyTo(this.sol.lon, this.sol.lat, z);
   }
 
   isEmergency() { return this.sol.M > EMERGENCY_M && intensityIndex(this.maxObs) >= intensityIndex(EMERGENCY_INT); }

@@ -7,6 +7,12 @@ const LEVELS = [
   [0.8, '0'], [2.5, '1'], [8, '2'], [25, '3'], [80, '4'],
   [140, '5弱'], [250, '5強'], [440, '6弱'], [800, '6強'], [Infinity, '7'],
 ];
+// 中央氣象署震度圖例配色
+export const INTENSITY_COLORS = {
+  '0': '#e2e8f0', '1': '#33ffdd', '2': '#34ff32', '3': '#fefd32', '4': '#fe8532',
+  '5弱': '#fd5233', '5強': '#c43745', '6弱': '#9d4646', '6強': '#9a4c86', '7': '#b51fea',
+};
+export const INTENSITY_NAMES = LEVELS.map(l => l[1]);
 export function intensity(gal) {
   for (const [lim, name] of LEVELS) if (gal < lim) return name;
   return '7';

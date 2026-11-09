@@ -7,53 +7,109 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <header>
-    <h1>Seismo Monitor <small>地震監測</small></h1>
-    <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">未連線</span></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+        <defs><linearGradient id="lg" x1="0" x2="1"><stop offset="0" stop-color="#5eead4"/><stop offset="1" stop-color="#818cf8"/></linearGradient></defs>
+        <rect x="2" y="2" width="44" height="44" rx="12" fill="url(#lg)" opacity=".15"/>
+        <path d="M6 26h8l3-9 4 18 4-24 4 20 3-8 3 3h7" fill="none" stroke="url(#lg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div>
+        <h1>Seismo Monitor</h1>
+        <p>ICM-42688-P · 自製地震監測站</p>
+      </div>
+    </div>
+    <div class="top-right">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="pill" id="statusPill"><span id="statusDot" class="dot"></span><span id="statusText">未連線</span></div>
+    </div>
   </header>
 
-  <section class="controls">
-    <label>資料來源
-      <select id="sourceSel">
-        <option value="sim">模擬資料</option>
-        <option value="ws">網路（ESP32 WebSocket）</option>
-      </select>
-    </label>
-    <label id="wsBox" hidden>位址 <input id="wsUrl" value="ws://192.168.4.1:81"></label>
-    <button id="btnConnect">開始</button>
-    <button id="btnQuake" class="warn">模擬地震</button>
-    <span class="sep"></span>
-    <button id="btnRecord">開始記錄 CSV</button>
-    <label>觸發門檻 STA/LTA <input id="thr" type="number" value="3" step="0.5" min="1.5" style="width:4em"></label>
-    <label><input id="sound" type="checkbox" checked> 提醒音效</label>
-  </section>
+  <main>
+    <section class="panel controls">
+      <div class="seg" role="radiogroup" aria-label="資料來源">
+        <select id="sourceSel" class="visually-hidden-select">
+          <option value="sim">模擬資料</option>
+          <option value="ws">網路（ESP32）</option>
+        </select>
+        <button class="seg-btn on" data-src="sim">模擬資料</button>
+        <button class="seg-btn" data-src="ws">ESP32 網路</button>
+      </div>
+      <label class="field" id="wsBox" hidden><span>位址</span><input id="wsUrl" value="ws://192.168.4.1:81"></label>
+      <button id="btnConnect" class="btn primary"><span class="ico">▶</span><span class="lbl">開始</span></button>
+      <button id="btnQuake" class="btn ghost-warn">⚡ 模擬地震</button>
+      <span class="spacer"></span>
+      <label class="field small"><span>觸發 STA/LTA</span><input id="thr" type="number" value="3" step="0.5" min="1.5"></label>
+      <label class="switch"><input id="sound" type="checkbox" checked><span class="track"></span><span>提醒音效</span></label>
+      <button id="btnRecord" class="btn rec"><span class="rec-dot"></span><span class="lbl">開始記錄</span></button>
+    </section>
 
-  <section class="stats">
-    <div class="card"><div class="k">即時 PGA</div><div class="v" id="pgaNow">–</div><div class="u">gal</div></div>
-    <div class="card"><div class="k">估計震度</div><div class="v" id="intNow">–</div><div class="u">中央氣象署分級（估計）</div></div>
-    <div class="card"><div class="k">STA/LTA</div><div class="v" id="ratioNow">–</div><div class="u">最大軸</div></div>
-    <div class="card"><div class="k">取樣率</div><div class="v" id="rateNow">–</div><div class="u">Hz</div></div>
-    <div class="card"><div class="k">記錄</div><div class="v small" id="recNow">未記錄</div><div class="u" id="recRows"></div></div>
-  </section>
+    <div id="alert" class="alert" hidden>
+      <div class="alert-ring"></div>
+      <div><strong>偵測到震動</strong><span id="alertText"></span></div>
+    </div>
 
-  <div id="alert" class="alert" hidden></div>
+    <section class="kpis">
+      <article class="panel kpi intensity" id="intCard">
+        <div class="k">估計震度</div>
+        <div class="big"><span id="intNow">–</span><small>級</small></div>
+        <div class="scale" id="scale"></div>
+        <div class="u">中央氣象署分級 · 5 弱以上為 PGA 粗估</div>
+      </article>
+      <article class="panel kpi">
+        <div class="k">即時 PGA</div>
+        <div class="v"><span id="pgaNow">–</span><small>gal</small></div>
+        <canvas id="spark" class="spark" height="44"></canvas>
+      </article>
+      <article class="panel kpi">
+        <div class="k">STA / LTA</div>
+        <div class="v"><span id="ratioNow">–</span></div>
+        <div class="meter"><div id="ratioBar"></div><i id="thrMark"></i></div>
+        <div class="u">觸發門檻線</div>
+      </article>
+      <article class="panel kpi">
+        <div class="k">取樣率</div>
+        <div class="v"><span id="rateNow">–</span><small>Hz</small></div>
+        <div class="u">記錄 <b id="recNow">未記錄</b></div>
+        <div class="u" id="recRows"></div>
+      </article>
+    </section>
 
-  <section>
-    <h2>即時波形（最近 20 秒，已去除重力／靜態偏移）</h2>
-    <canvas id="live" height="420"></canvas>
-  </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>即時波形</h2>
+        <div class="legend"><i class="lx"></i>X 東西 <i class="ly"></i>Y 南北 <i class="lz"></i>Z 垂直 <span class="muted">· 最近 20 秒 · 已去除重力</span></div>
+      </div>
+      <canvas id="live" class="wave" height="440"></canvas>
+    </section>
 
-  <section>
-    <h2>事件紀錄</h2>
-    <table id="events"><thead><tr><th>時間</th><th>最大 PGA (gal)</th><th>估計震度</th><th>持續 (s)</th><th>檔案</th></tr></thead><tbody></tbody></table>
-  </section>
+    <div class="two">
+      <section class="panel">
+        <div class="panel-head"><h2>事件紀錄</h2><span class="muted" id="evCount">尚無事件</span></div>
+        <div class="table-wrap">
+          <table id="events">
+            <thead><tr><th>時間</th><th>最大 PGA</th><th>震度</th><th>持續</th><th>檔案</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="empty" id="evEmpty">偵測到震動後，事件前後 30 秒的資料會自動存檔並列在這裡。</div>
+        </div>
+      </section>
 
-  <section>
-    <h2>回看 CSV</h2>
-    <input type="file" id="fileIn" accept=".csv">
-    <span id="replayInfo"></span>
-    <canvas id="replay" height="360"></canvas>
-  </section>
+      <section class="panel">
+        <div class="panel-head"><h2>回看 CSV</h2><span class="muted" id="replayInfo"></span></div>
+        <label class="drop" id="drop">
+          <input type="file" id="fileIn" accept=".csv" hidden>
+          <span class="drop-ico">⇪</span>
+          <span>拖曳 CSV 到這裡，或<u>點此選擇檔案</u></span>
+        </label>
+        <canvas id="replay" class="wave" height="300" hidden></canvas>
+      </section>
+    </div>
+
+    <footer>Seismo Monitor v0.1 · <a href="https://github.com/pyps0990-alt/seismo-monitor" target="_blank" rel="noopener">GitHub</a></footer>
+  </main>
 
   <script type="module" src="js/main.js"></script>
 </body>

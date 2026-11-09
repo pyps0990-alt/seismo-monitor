@@ -130,7 +130,13 @@ export class TaiwanEEW {
     const picked = new Set(picks.map(p => p.name));
     const stationInts = new Map();
     let maxObs = '0';
-    for (const s of sc.stations) { const n = this.stationInt(s, now); if (n) { stationInts.set(s.name, n); if (intensityIndex(n) > intensityIndex(maxObs)) maxObs = n; } }
+    for (const s of sc.stations) {
+      const n = this.stationInt(s, now);
+      if (!n) continue;
+      stationInts.set(s.name, n);
+      // 最大震度只採計陸上測站（海底站不代表有人居住地區的搖晃）
+      if (s.type === 'land' && intensityIndex(n) > intensityIndex(maxObs)) maxObs = n;
+    }
     this.maxObs = maxObs;
 
     // 每有新觸發就做「關聯＋定位」；至少 3 站互相確認才發布第一報，之後 8 站內每站更新、再來每 3 站更新
@@ -151,6 +157,9 @@ export class TaiwanEEW {
         this.lastUsed = sol.n; this.lastReportN = n; this.report++;
         this.rejected = new Set(sol.rejected.map(p => p.name));
         this.townInts = TOWNS.map(tw => predictAt(this.sol.M, hypo(tw.c[0], tw.c[1], this.sol), tw).n);
+        // 最大預估震度：陸地鄉鎮中的最大值
+        let mi = 0; this.townInts.forEach((v, i) => { if (intensityIndex(v) > intensityIndex(this.townInts[mi])) mi = i; });
+        this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
         this.announce(now, prev);
       }
     }
@@ -221,11 +230,14 @@ export class TaiwanEEW {
         <span class="eew-no">第 ${this.report} 報</span>
       </div>
       <div class="eew-sub">${hhmmss(so.issued)} 發布 · 發震後 ${((this.firstIssued - this.sc.q.t0) / 1000).toFixed(1)} 秒第一報 · ${quality} · 運算 ${so.calcMs.toFixed(0)} ms<br>
-        測站最大實測 ${badge(this.maxObs)}${so.rejected.length ? ` · 已排除 ${so.rejected.length} 個誤觸發／無關觸發` : ''}</div>
+        陸上測站最大實測 ${badge(this.maxObs)}${so.rejected.length ? ` · 已排除 ${so.rejected.length} 個誤觸發／無關觸發` : ''}</div>
       <div class="eew-grid">
         <div><div class="k">預估規模</div><div class="v">M ${so.M.toFixed(1)}</div></div>
         <div><div class="k">深度</div><div class="v">${so.n < 4 ? '—' : so.depth.toFixed(0)}<small>${so.n < 4 ? '待定' : 'km'}</small></div></div>
       </div>
+      <div class="eew-max"><span class="k">最大預估震度（陸地）</span>
+        <span class="eew-max-v" style="color:${INTENSITY_COLORS[this.maxLand.n]}">${this.maxLand.n}<small>級</small></span>
+        <span class="muted">${this.maxLand.town.county}${this.maxLand.town.name}</span></div>
       <div class="eew-epi"><span class="k">震央</span>${epi.text}<br><span class="muted">（${epi.where}）</span></div>
       <div class="eew-home">
         <div>

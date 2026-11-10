@@ -11,21 +11,21 @@
 const rand = (a, b) => a + Math.random() * (b - a);
 const KX = 111.32 * Math.cos(23.7 * Math.PI / 180), KY = 110.57;
 
-// 琉球海溝西段（經度, 緯度），由西往東
+// 琉球海溝西段（經度, 緯度），由西往東；西端延伸到宜蘭、花蓮交界外海
 export const TRENCH = [
-  [121.95, 23.25], [122.5, 23.15], [123.0, 23.15], [123.5, 23.3], [124.0, 23.5], [124.5, 23.75], [125.0, 24.05], [125.5, 24.4],
+  [121.95, 24.3], [122.25, 24.0], [122.7, 23.75], [123.2, 23.65], [123.7, 23.7], [124.2, 23.85], [124.7, 24.1], [125.2, 24.4],
 ];
 
 export const SEQ = {
-  ZONE: { lon: [122.2, 123.8], depth: [20, 40] },   // 主震沿海溝西段分布
-  DOWNDIP_KM: [30, 80],         // 主震位在海溝線以北多遠（交界面往北變深）
-  STRIKE_DEG: 80,               // 西段海溝大致呈東西向（略偏東北東）
+  ZONE: { lon: [122.1, 123.9], depth: [20, 40] },   // 主震沿海溝西段分布
+  DOWNDIP_KM: [20, 60],         // 主震位在海溝線以北多遠（交界面往北變深）
+  STRIKE_DEG: 75,               // 西段海溝大致呈東北東走向
   OMORI: { c: 0.05, p: 1.1 },   // 小時
   B: 1.0, BATH: 1.2,
   SPAN_H: 2,                    // 模擬主震後 2 小時的餘震
   MAX_AFTER: 12,                // 最多取 12 個餘震（取規模最大的）
-  MIN_GAP_S: 25,                // 播放時每個地震至少間隔 25 秒（讓速報系統一次處理一個）
-  SCALE: 60,                    // 時間快轉：真實 60 秒 → 播放 1 秒
+  MIN_GAP_S: 6, MIN_REAL_H: 0.05, DOUBLET_P: 0.05,                 // 連續播放：地震可以重疊，只保留 6 秒最小間隔（避免完全同時）
+  SCALE: 20,                    // 時間快轉：真實 20 秒 → 播放 1 秒
 };
 
 // Omori–Utsu 分布抽樣（反函數法），回傳主震後幾小時
@@ -48,14 +48,24 @@ export function buildSequence(Mmain, { foreshocks = true } = {}) {
     const [x1, y1] = TRENCH[i], [x2, y2] = TRENCH[i + 1];
     if (lon0 >= x1 && lon0 <= x2) { latT = y1 + (y2 - y1) * (lon0 - x1) / (x2 - x1); break; }
   }
-  const main = { lon: lon0, lat: latT + rand(...SEQ.DOWNDIP_KM) / KY, depth: Math.round(rand(...z.depth)), M: Mmain };
+  // 海溝型地震只發生在海溝上：震央一律落在海溝線上
+  const main = { lon: lon0, lat: latT, depth: Math.round(rand(...z.depth)), M: Mmain };
   const L = 10 ** (-2.44 + 0.59 * Mmain), W = L * 0.4;                // 破裂長度與寬度（km）
-  const th = SEQ.STRIKE_DEG * Math.PI / 180, ux = Math.sin(th), uy = Math.cos(th);
-  const onRupture = () => {
-    const a = rand(-L / 2, L / 2), b = rand(-W / 2, W / 2);
-    const x = a * ux + b * uy, y = a * uy - b * ux;
-    return { lon: main.lon + x / KX, lat: main.lat + y / KY, depth: Math.max(8, Math.round(main.depth + rand(-12, 12))) };
+  // 海溝線依累積距離參數化，前震/餘震沿海溝線分布在主震 ±L/2 範圍
+  const segs = []; let tot = 0, sMain = 0;
+  for (let i = 0; i < TRENCH.length - 1; i++) {
+    const [x1, y1] = TRENCH[i], [x2, y2] = TRENCH[i + 1];
+    const len = Math.hypot((x2 - x1) * KX, (y2 - y1) * KY);
+    if (lon0 >= x1 && lon0 <= x2) sMain = tot + len * (lon0 - x1) / (x2 - x1);
+    segs.push({ x1, y1, x2, y2, s0: tot, len }); tot += len;
+  }
+  const atS = s => {
+    s = Math.min(tot, Math.max(0, s));
+    const g = segs.find(g => s <= g.s0 + g.len) ?? segs[segs.length - 1];
+    const f = (s - g.s0) / g.len;
+    return { lon: g.x1 + (g.x2 - g.x1) * f, lat: g.y1 + (g.y2 - g.y1) * f };
   };
+  const onRupture = () => ({ ...atS(sMain + rand(-L / 2, L / 2)), depth: Math.max(8, Math.round(main.depth + rand(-12, 12))) });
   const round1 = m => Math.round(m * 10) / 10;
 
   // 餘震：最大餘震依 Båth 定律；其餘依 G-R 分布；時間依 Omori 定律
@@ -72,6 +82,16 @@ export function buildSequence(Mmain, { foreshocks = true } = {}) {
   list.push({ ...main, tH: 0, kind: '主震' });
   for (const a of kept) list.push({ ...a, kind: '餘震' });
   list.sort((a, b) => a.tH - b.tH);
+  // 同一斷層剛破裂後應力已釋放，不會在極短時間內連續破裂：相鄰地震至少間隔 MIN_REAL_H（真實時間），
+  // 只有少數「雙重地震」特例（DOUBLET_P 機率）可以更接近
+  for (let i = 1; i < list.length; i++) {
+    const prev = list[i - 1].tH, min = list[i].kind === '主震' || list[i - 1].kind === '主震' ? SEQ.MIN_REAL_H * 2 : SEQ.MIN_REAL_H;
+    if (list[i].tH - prev < min) list[i].tH = list[i].kind === '餘震' && Math.random() < SEQ.DOUBLET_P ? prev + rand(0.002, 0.01) : prev + min * rand(1, 1.6);
+  }
+  if (foreshocks) {                                           // 前震往前推，保證主震時間為 0
+    const shift = list.find(e => e.kind === '主震').tH;
+    list.forEach(e => { e.tH -= shift; });
+  }
 
   // 播放時間：真實時間快轉 SCALE 倍，但每個地震至少間隔 MIN_GAP_S 秒
   let t = 0;

@@ -14,6 +14,8 @@ const MAX_REPORTS = Infinity;   // 報數無上限：每有新測站或規模更
 const END_MS = 75000;
 const EMERGENCY_M = 5.5;          // 預估規模 > 5.5
 const EMERGENCY_INT = '4';        // 且任一測站實測震度 ≥ 4 級 → 強震即時訊息
+// 或：預估規模 > 6 且陸地預估最大震度 ≥ 4 級 → 直接發布強震即時訊息（不必等測站實測）
+const EMERGENCY_PRED_M = 6.0, EMERGENCY_PRED_INT = '4';
 
 const badge = n => `<span class="badge" style="background:${INTENSITY_COLORS[n]}">${n}</span>`;
 const hhmmss = t => new Date(t).toLocaleTimeString('zh-TW', { hour12: false });
@@ -125,6 +127,7 @@ export class TaiwanEEW {
       : this.real ? { lon: this.real.lon, lat: this.real.lat, depth: this.real.depth, M: this.real.M } : this.readQuake();
     const t0 = Date.now() + 1500;
     this.sc = createScenario(q, t0);
+    this.extras = []; this.others = [];   // 新的主要地震：清空重疊地震與其他地震的追蹤
     // 真實地震回放：虛擬測站 6 km 內若有當時的真實測站，就改用真實量到的 PGA／PGV
     // → 測站實測震度（與 PLUM 即時修正）反映真實情況，例如 0403 臺北盆地實測 5 弱
     if (this.real) {
@@ -167,10 +170,23 @@ export class TaiwanEEW {
 
   onLocalTrigger(t) { if (!this.sc || this.localPick || this.reveal) return false; this.localPick = t; return true; }
 
-  // 目前所有觸發（含誤觸發）；本站地震儀偵測到 P 波也算一站
+  // 目前所有同時進行中的地震（主要地震＋重疊發生的其他地震）
+  allScs() { return [this.sc, ...(this.extras ?? [])].filter(Boolean); }
+
+  // 重疊地震：前一個地震還在進行時又發生新的地震 → 加入模擬世界，由速報系統自己分辨
+  addOverlapping(q, seqIdx) {
+    const sc = createScenario(q, Date.now() + 1500);
+    sc.seqIdx = seqIdx;
+    (this.extras ??= []).push(sc);
+    const h = this.home, R = Math.hypot(distKm(h.lon, h.lat, q.lon, q.lat), q.depth);
+    const tp = sc.q.t0 + (R / VP) * 1000, ts = sc.q.t0 + (R / VS) * 1000, ht = predictAt(q.M, sourceDist(h.lon, h.lat, q), h.site, q.depth);
+    this.onQuake({ t0: tp, sp: ts - tp, peak: ht.pga / 100 / 1.15, freq: dominantFreq(q.M), dur: 6000 + (q.M - 4) * 5000 });
+  }
+
+  // 目前所有觸發（含誤觸發、所有同時進行的地震）；本站地震儀偵測到 P 波也算一站
   currentPicks(now) {
     const out = [];
-    for (const s of this.sc.stations) { const tr = triggerOf(s); if (arrived(tr, now)) out.push({ ...s, ...tr }); }
+    for (const sc of this.allScs()) for (const s of sc.stations) { const tr = triggerOf(s); if (arrived(tr, now)) out.push({ ...s, ...tr }); }
     if (this.localPick) out.push({ name: '本站', lon: this.home.lon, lat: this.home.lat, tp: this.localPick, pAmp: this.homeTruth.pga * 0.3, pd: this.homePd, site: this.home.site, local: true });
     return out.sort((a, b) => a.tp - b.tp);
   }
@@ -191,19 +207,21 @@ export class TaiwanEEW {
     const sc = this.sc;
     const picks = this.currentPicks(now);
     const picked = new Set(picks.map(p => p.name));
+    // 測站實測震度：同一個測站可能同時被好幾個地震搖動 → 取最大
     const stationInts = new Map();
     let maxObs = '0';
-    for (const s of sc.stations) {
+    this.obsInts = new Map();
+    for (const scx of this.allScs()) for (const s of scx.stations) {
       const n = this.stationInt(s, now);
       if (!n) continue;
-      stationInts.set(s.name, n);
+      const old = stationInts.get(s.name);
+      if (!old || intensityIndex(n) > intensityIndex(old)) stationInts.set(s.name, n);
       // 最大震度只採計陸上測站（海底站不代表有人居住地區的搖晃）
       if (s.type === 'land' && intensityIndex(n) > intensityIndex(maxObs)) maxObs = n;
+      // PLUM 用的陸上測站實測震度（只取已達 1 級以上）
+      if (s.type === 'land' && n !== '0') { const o = this.obsInts.get(s.name); if (!o || intensityIndex(n) > intensityIndex(o)) this.obsInts.set(s.name, n); }
     }
     this.maxObs = maxObs;
-    // PLUM 用的陸上測站實測震度（只取已達 1 級以上）
-    this.obsInts = new Map();
-    for (const s of sc.stations) { const v = stationInts.get(s.name); if (v && v !== '0' && s.type === 'land') this.obsInts.set(s.name, v); }
     if (this.sol && !this.reveal && now - (this.lastPlum ?? 0) > 1000) { this.lastPlum = now; if (this.lastCalc !== now) this.refreshForecast(now); }
 
     // 每有新觸發就做「關聯＋定位」；至少 3 站互相確認才發布第一報，之後 8 站內每站更新、再來每 3 站更新
@@ -216,7 +234,7 @@ export class TaiwanEEW {
     if (!this.reveal && !this.busy && n && now - (this.lastCalc ?? 0) >= PROCESS_MS && this.report < MAX_REPORTS
         && ((n > this.lastN && (this.report === 0 || n - this.lastReportN >= step)) || pdPending)) {
       this.lastN = n; this.lastCalc = now;
-      const idle = sc.stations.filter(s => !picked.has(s.name));
+      const idle = STATIONS.filter(s => !picked.has(s.name));
       // 接續搜尋：沿用上一個正式解縮小搜尋範圍；每 3 秒做一次完整搜尋避免卡在錯誤位置
       const fullSearch = !this.sol || this.sol.prelim || now - (this.lastFullSearch ?? 0) > 3000;
       if (fullSearch) this.lastFullSearch = now;
@@ -228,12 +246,14 @@ export class TaiwanEEW {
     // 速報等級也可能在兩報之間因測站實測震度升級
     if (this.sol && !this.reveal && this.level === 'normal' && this.isEmergency()) { this.report++; this.snapshotIssue(now); this.announce(now, null, true); }   // 升級為強震即時訊息也算新的一報
 
+    // 主要地震結束時，若還有重疊的地震在進行 → 把下一個地震接上來當主要地震（不揭曉、繼續預警）
+    if (!this.reveal && now - sc.q.t0 > END_MS && this.extras?.length) { this.promote(this.extras[0], now); return; }
     if (!this.reveal && now - sc.q.t0 > END_MS) { this.reveal = true; $('twStart').disabled = !!this.seq; document.body.classList.remove('quake-on'); }
     // 範圍通知階段：地圖只畫正方形警示區域（尚未確認，不逐鄉鎮上色）；正式速報後才逐鄉鎮上色
     // 鄉鎮震度上色：正式速報後才上色（範圍通知階段未確認，不上色）
     // 區塊方框：只亮在「已偵測到 P 波」的區域（見 pBlocks），對這些區塊做預警
     this.pRegion = this.reveal ? null : this.pBlocks(picks);
-    this.frame = { picked, stationInts };
+    this.frame = { picked, stationInts, shaking: this.reveal ? null : this.shakingTowns(now) };
     this.render(now, n);
     this.updateTip(now);   // 滑鼠停著不動時，資訊框也跟著震度更新
     if (this.reveal) document.body.classList.remove('eew-emergency');
@@ -244,7 +264,7 @@ export class TaiwanEEW {
     if (!TOWNS.length) return;
     if (!this.sc || !this.frame) { this.map.draw({ mode: this.mode, now, home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, pickPoint: this.readQuake(), townInts: this.seqMax, trench: this.seqTrench }); return; }
     const sc = this.sc, { picked, stationInts } = this.frame;
-    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.seqMax ?? (this.sol?.prelim ? null : this.townInts), trench: this.seqTrench,
+    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.combinedInts(), trench: this.seqTrench, others: this.reveal ? null : this.okOthers(), shaking: this.frame.shaking,
       region: this.pRegion, picked, stationInts, rejected: this.rejected,
       realStations: this.reveal && this.real ? this.real.stations : null,
       level: this.sol?.prelim ? null : this.level,
@@ -338,11 +358,12 @@ export class TaiwanEEW {
   stepSequence(now) {
     const s = this.seq, next = s.events[s.idx + 1];
     if (next && now - s.t0 >= next.at) {
-      this.recordSeqResult();
       s.idx++;
-      this.start(next);
+      // 連續播放：前一個地震還在進行時，新地震直接重疊加入，由速報系統自己分辨；沒有進行中的地震才從頭開始
+      if (this.sc && !this.reveal) this.addOverlapping(next, s.idx);
+      else { this.recordSeqResult(); this.start(next); this.sc.seqIdx = s.idx; }
       this.renderSeq(now);
-    } else if (!next && this.reveal) {   // 最後一個地震也結束了
+    } else if (!next && this.reveal && !this.extras?.length) {   // 最後一個地震也結束了
       this.recordSeqResult();
       $('seqNote').textContent = '序列結束';
       this.renderSeq(now);
@@ -352,9 +373,11 @@ export class TaiwanEEW {
   }
   // 記錄目前這個地震的速報成績（第一報時間、規模與震央誤差、速報等級）
   recordSeqResult() {
-    const s = this.seq; if (!s || s.idx < 0 || s.results[s.idx] || !this.sc) return;
+    const s = this.seq; if (!s || !this.sc) return;
+    const idx = this.sc.seqIdx ?? s.idx;      // 重疊時主要地震不一定是最新的那個
+    if (idx < 0 || s.results[idx]) return;
     const q = this.sc.q, so = this.sol && !this.sol.prelim ? this.sol : null;
-    s.results[s.idx] = so ? {
+    s.results[idx] = so ? {
       first: this.firstIssued ? (this.firstIssued - q.t0) / 1000 : null,
       notice: this.firstNotice ? (this.firstNotice - q.t0) / 1000 : null,
       M: so.M, dM: so.M - q.M, epi: distKm(q.lon, q.lat, so.lon, so.lat), level: this.level, reports: this.report,
@@ -371,7 +394,8 @@ export class TaiwanEEW {
       已處理 ${done.length} 個：發布速報 ${ok.length} 個${done.length - ok.length ? `、未發布 ${done.length - ok.length} 個` : ''}`
       + (ok.length ? `<br>平均第一報 ${avg(ok.map(r => r.first)).toFixed(1)} 秒・規模誤差 ±${avg(ok.map(r => Math.abs(r.dM))).toFixed(2)}・震央誤差 ${avg(ok.map(r => r.epi)).toFixed(1)} km` : '');
     const rows = s.events.map((e, i) => {
-      const r = s.results[i], cur = i === s.idx && !r, st = r ? 'done' : cur ? 'now' : 'wait';
+      const r = s.results[i], cur = i <= s.idx && !r,   // 已發生但尚未結束的（可能好幾個同時進行）
+      st = r ? 'done' : cur ? 'now' : 'wait';
       const res = r ? (r.missed ? '未發布速報（規模或確認站數不足）' : `第一報 ${r.first?.toFixed(1)} 秒・估 M${r.M.toFixed(1)}・震央差 ${r.epi.toFixed(1)} km${r.level === 'emergency' ? '・強震' : ''}`)
         : cur ? '進行中…' : `${Math.max(0, Math.ceil((s.t0 + e.at - now) / 1000))} 秒後`;
       return `<div class="seq-row ${st}"><span>${r ? '✓' : cur ? '▶' : '○'}</span><span class="k1 ${e.kind === '主震' ? 'main' : ''}">${e.kind}</span>
@@ -399,11 +423,21 @@ export class TaiwanEEW {
       prev: prev && { lon: prev.lon, lat: prev.lat, depth: prev.depth, M: prev.M }, wantNotice: this.report === 0 });
   }
 
-  onSolved({ id, sol, notice, calcMs }) {
+  // 兩個震源解是否為同一個地震：震央 80 km 內、發震時間差 15 秒內
+  static same(a, b) { return a && b && distKm(a.lon, a.lat, b.lon, b.lat) < 80 && Math.abs(a.t0 - b.t0) < 15000; }
+
+  onSolved({ id, sol: _first, sols = [], notice, calcMs }) {
     this.busy = false;
     const job = this.job;
     if (!job || job.id !== id || job.sc !== this.sc || !this.sc || this.reveal) return;   // 已過期（地震結束或重新開始）
     const now = Date.now(), n = job.n;
+    // 多個地震：找出屬於「主要地震」的解（和目前的主要解是同一個；還沒有主要解時取發震最早的），其餘交給 updateOthers
+    let sol = null;
+    if (sols.length) {
+      const cur = this.sol && !this.sol.prelim ? this.sol : null;
+      sol = cur ? sols.find(s => TaiwanEEW.same(s, cur)) ?? null : [...sols].sort((a, b) => a.t0 - b.t0)[0];
+      this.updateOthers(sols.filter(s => s !== sol), now);
+    }
     const morePd = sol && this.sol && sol.nPd > (this.sol.nPd ?? 0);    // 有更多測站收滿 Pd → 規模更新
     if (sol && (this.report === 0 || sol.n - this.lastUsed >= 1 || morePd)) {
       // ---- 正式速報：≥3 站互相確認 ----
@@ -426,6 +460,76 @@ export class TaiwanEEW {
       this.setForecast(notice, now, calcMs);
       if (first) this.announcePrelim(now);
       this.follow();
+    }
+  }
+
+  // ---- 同時發生的其他地震 ----
+  // 每個「其他地震」保留自己的震源解、各鄉鎮預估震度；第一次出現時播提示並語音告知你那裡的震度
+  updateOthers(list, now) {
+    this.others ??= [];
+    for (const s of list) {
+      const o = this.others.find(x => TaiwanEEW.same(x.sol, s));
+      const ints = TOWNS.map(tw => this.plumMax(predictAt(s.M, sourceDist(tw.c[0], tw.c[1], s), tw, s.depth).n, tw));
+      // 防止幽靈地震：同一位置連續被解出 3 次、移動 < 30 km、且用到 ≥ 6 站，才算確認，才會發聲、顯示與計入震度
+      if (o) {
+        const stable = distKm(o.sol.lon, o.sol.lat, s.lon, s.lat) < 30 && s.n >= 6;
+        o.hits = stable ? (o.hits ?? 1) + 1 : 1;
+        const was = o.ok; o.ok = o.ok || o.hits >= 3;
+        o.sol = s; o.ints = ints; o.seen = now;
+        if (o.ok && !was) {
+        const hp = this.homePred(s), sec = Math.ceil((hp.ts - now) / 1000);
+        this.sound.update();
+          if (intensityIndex(hp.n) >= 2 && sec > 2) this.say(`另一個地震，${this.phrase(hp.n, sec)}`, 0.3);
+        }
+      } else this.others.push({ sol: s, ints, seen: now, first: now, hits: 1, ok: false });
+    }
+    // 超過 20 秒沒有再被偵測到、或發生已超過 90 秒的，就不再追蹤
+    this.others = this.others.filter(o => now - o.seen < 20000 && now - o.sol.t0 < 90000);
+  }
+
+  // 地圖用的鄉鎮震度：序列累計最大、主要地震、其他同時進行的地震，三者取最大（有變化才換新陣列，地圖快取才會更新）
+  okOthers() { return (this.others ?? []).filter(o => o.ok); }
+  combinedInts() {
+    const arrays = [this.seqMax, this.sol && !this.sol.prelim ? this.townInts : null, ...this.okOthers().map(o => o.ints)].filter(Boolean);
+    if (!arrays.length) return null;
+    if (arrays.length === 1) return arrays[0];
+    const out = TOWNS.map((_, i) => arrays.reduce((m, a) => (a[i] && intensityIndex(a[i]) > intensityIndex(m) ? a[i] : m), '0'));
+    const key = out.join(',');
+    if (key !== this.combinedKey) { this.combinedKey = key; this.combinedArr = out; }
+    return this.combinedArr;
+  }
+
+  // 正在搖晃的鄉鎮：S 波在最近 8 秒內掃過、且預估 1 級以上（主要地震與其他地震都算）→ 地圖上閃爍外框
+  shakingTowns(now) {
+    const out = new Set();
+    const evs = [this.sol && !this.sol.prelim ? { sol: this.sol, ints: this.townInts } : null, ...this.okOthers()].filter(Boolean);
+    for (const { sol, ints } of evs) TOWNS.forEach((t, i) => {
+      if (!ints?.[i] || ints[i] === '0') return;
+      const dt = now - (sol.t0 + (hypo(t.c[0], t.c[1], sol) / VS) * 1000);
+      if (dt >= 0 && dt < 8000) out.add(i);
+    });
+    return out;
+  }
+
+  // 主要地震結束、但還有重疊的地震在進行：把下一個地震接上來當主要地震
+  promote(sc, now) {
+    this.recordSeqResult();
+    this.extras = this.extras.filter(x => x !== sc);
+    const prevOthers = this.others ?? [];
+    this.sc = sc;
+    Object.assign(this, { sol: null, report: 0, lastN: 0, lastUsed: 0, lastReportN: 0, issued: null, busy: false, job: null, rejected: null, realEval: null,
+      firstIssued: null, firstNotice: null, prelim: null, maxLand: null, region: null, homeAlerted: null, homeInRegion: false, localPick: null, reveal: false,
+      townInts: null, lastTick: null, arrived: false, level: null, lastCalc: 0 });
+    const h = this.home, q = sc.q;
+    this.homeTruth = predictAt(q.M, sourceDist(h.lon, h.lat, q), h.site, q.depth);
+    this.homePd = pdOf(q.M, Math.hypot(distKm(h.lon, h.lat, q.lon, q.lat), q.depth));
+    // 如果這個地震已經被當成「其他地震」追蹤中，直接沿用它的解與第一次偵測時間（避免重新從零開始）
+    const o = prevOthers.find(x => Math.abs(x.sol.t0 - q.t0) < 15000 && distKm(x.sol.lon, x.sol.lat, q.lon, q.lat) < 80);
+    this.others = prevOthers.filter(x => x !== o);
+    if (o) {
+      this.setForecast(o.sol, now, 0);
+      this.firstIssued = o.first; this.report = 1; this.level = this.isEmergency() ? 'emergency' : 'normal';
+      this.snapshotIssue(now);
     }
   }
 
@@ -610,7 +714,12 @@ export class TaiwanEEW {
     this.say('通知取消');
   }
 
-  isEmergency() { return !this.sol.prelim && this.sol.M > EMERGENCY_M && intensityIndex(this.maxObs) >= intensityIndex(EMERGENCY_INT); }
+  isEmergency() {
+    if (this.sol.prelim) return false;
+    const byObs = this.sol.M > EMERGENCY_M && intensityIndex(this.maxObs) >= intensityIndex(EMERGENCY_INT);
+    const byPred = this.sol.M > EMERGENCY_PRED_M && this.maxLand && intensityIndex(this.maxLand.n) >= intensityIndex(EMERGENCY_PRED_INT);
+    return byObs || byPred;
+  }
 
   homePred(so) {
     const h = this.home, R = hypo(h.lon, h.lat, so), Rr = sourceDist(h.lon, h.lat, so);
@@ -714,6 +823,10 @@ export class TaiwanEEW {
         <div><span class="k">深度</span><b>${so.n < 4 ? '待定' : so.depth.toFixed(0) + ' km'}</b></div>
         <div><span class="k">最大震度</span><b style="color:${INTENSITY_COLORS[ml.n]}">${ml.n} 級</b></div>
       </div>
+      ${this.okOthers().length ? `<div class="eew-others">同時還有 ${this.okOthers().length} 個地震：${this.okOthers().map(o => {
+        const op = this.homePred(o.sol), os = Math.ceil((op.ts - now) / 1000);
+        return `<span>M${o.sol.M.toFixed(1)} ${describeEpicenter(o.sol.lon, o.sol.lat).where.replace('位於', '')}・你這裡 <b style="background:${INTENSITY_COLORS[op.n]}">${shortInt(op.n)}</b>${os > 0 ? `・${os} 秒` : '・已抵達'}</span>`;
+      }).join('')}</div>` : ''}
       <div class="eew-epi">${prelim ? '初估震央' : '震央'}：${epi.where.replace('位於', '')}（${epi.text}）<br>最大震度地區：${ml.town.county}${ml.town.name}</div>
       <div class="eew-meta">
         ${this.firstNotice ? `發震後 ${((this.firstNotice - t0) / 1000).toFixed(1)} 秒範圍通知 · ` : ''}${this.firstIssued ? `${((this.firstIssued - t0) / 1000).toFixed(1)} 秒正式速報 · ` : ''}預警 ${lead > 0 ? lead.toFixed(1) + ' 秒' : '無'} ·
@@ -786,7 +899,7 @@ export class TaiwanEEW {
     $('secSetup').open = true; $('secTowns').open = false;
     $('eewCard').className = 'eew-card idle';
     setHTML($('eewCard'), `<div class="ttl">待命中</div>
-      <p>偵測到 P 波就發布範圍通知；3 站確認後發布正式速報。規模 &gt; ${EMERGENCY_M} 且陸上測站實測 ≥ ${EMERGENCY_INT} 級時為強震即時訊息。</p>`);
+      <p>偵測到 P 波就發布範圍通知；3 站確認後發布正式速報。強震即時訊息：規模 &gt; ${EMERGENCY_PRED_M} 且預估陸地震度 ≥ ${EMERGENCY_PRED_INT} 級（直接發布），或規模 &gt; ${EMERGENCY_M} 且陸上測站實測 ≥ ${EMERGENCY_INT} 級。</p>`);
   }
 
   onHover(p, e) {

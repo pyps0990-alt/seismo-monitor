@@ -263,7 +263,8 @@ export function locate(picks, idle = [], now = picks[picks.length - 1]?.tp, prev
   const f = picks[0], box = 1.4; // 震央一定在第一站附近（P 波最先到），只搜尋 ±1.4°
   // 接續搜尋：已有上一報的解且站數夠多時，只在上次震央 ±0.3° 內搜尋（快約 7 倍，避免畫面卡頓）；
   // 呼叫端每 3 秒會不帶 prev 做一次完整搜尋，避免卡在錯誤的位置
-  const warm = prev && picks.length >= 5;
+  // 只有這一群觸發確實在上一個震央附近（100 km 內）才接續搜尋；多個地震同時進行時，避免把別的地震套用到錯的位置
+  const warm = prev && picks.length >= 5 && distKm(prev.lon, prev.lat, f.lon, f.lat) < 100;
   const coarse = warm
     ? searchGrid(picks, idle, now, [prev.lon - 0.3, prev.lon + 0.3], [prev.lat - 0.3, prev.lat + 0.3], 0.05, [-20, -10, 0, 10, 20].map(d => Math.max(3, prev.depth + d)))
     : searchGrid(picks, idle, now, [Math.max(118.5, f.lon - box), Math.min(123.8, f.lon + box)], [Math.max(20.5, f.lat - box), Math.min(26.5, f.lat + box)], 0.1, many ? [5, 10, 20, 30, 50, 75, 100] : picks.length === 3 ? [10, 30, 60] : [10]);

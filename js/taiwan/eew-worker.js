@@ -13,7 +13,17 @@ self.onmessage = async ({ data: m }) => {
   await ready;
   if (m.type !== 'solve') return;
   const t = performance.now();
-  const sol = locateRobust(m.picks, m.idle, m.now, m.prev);
+  // 多個地震同時進行：先找出最大的一群觸發定位，把用掉的觸發移除，再從剩下的找下一群（最多 4 個地震）
+  const sols = [];
+  let rest = m.picks;
+  for (let k = 0; k < 4 && rest.length >= 3; k++) {
+    const s = locateRobust(rest, m.idle, m.now, k === 0 ? m.prev : null);
+    if (!s) break;
+    sols.push(s);
+    const used = new Set(s.used.map(p => `${p.name}@${p.tp}`));
+    rest = rest.filter(p => !used.has(`${p.name}@${p.tp}`));
+  }
+  const sol = sols[0] ?? null;
   let notice = null;
   // 還沒有正式解時，判斷是否要發「範圍通知」（3 站確認，或 2 站確認且 P 波振幅 ≥ 3 gal；初估規模 ≥ 4.0）
   if (!sol && m.wantNotice) {
@@ -26,5 +36,5 @@ self.onmessage = async ({ data: m }) => {
       if (pv.mPartial || pv.M >= NOTICE.MIN_M) notice = { ...pv, prelim: true, n: recent.length, used: recent, rejected: [], rule: cand.rule };
     }
   }
-  self.postMessage({ id: m.id, sol, notice, calcMs: performance.now() - t });
+  self.postMessage({ id: m.id, sol, sols, notice, calcMs: performance.now() - t });
 };

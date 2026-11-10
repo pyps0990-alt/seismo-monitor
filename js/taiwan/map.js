@@ -127,6 +127,16 @@ export class TaiwanMap {
     }
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(this.layer, 0, 0); ctx.restore();
 
+    // 正在搖晃的鄉鎮（S 波最近 8 秒內掃過）：閃爍白色外框，看得出地震波正掃過哪裡
+    if (st.shaking?.size) {
+      const a = 0.35 + 0.55 * Math.abs(Math.sin(st.now / 160));
+      ctx.save();
+      ctx.setTransform(this.dpr * z, 0, 0, this.dpr * z, this.dpr * v.tx, this.dpr * v.ty);
+      ctx.strokeStyle = `rgba(255,255,255,${a})`; ctx.lineWidth = 2 / z;
+      for (const i of st.shaking) ctx.stroke(this.townPaths[i]);
+      ctx.restore();
+    }
+
     // 琉球海溝（地震序列時顯示）：虛線＋三角形齒（齒朝向上覆板塊，也就是北側）
     if (st.trench) {
       ctx.save();
@@ -177,6 +187,18 @@ export class TaiwanMap {
       const sCol = st.level === 'emergency' ? '239,68,68' : st.level === 'normal' ? '249,115,22' : '203,213,225';
       ring(VP, 'rgba(250,204,21,.95)', 'rgba(250,204,21,.10)');
       ring(VS, `rgba(${sCol},.95)`, `rgba(${sCol},.16)`);
+    }
+    // 同時發生的其他地震：各自的 P／S 波圓（較細）與較小的震央星號
+    for (const o of st.others ?? []) {
+      const so = o.sol, el = (st.now - so.t0) / 1000, [ex, ey] = P(so.lon, so.lat);
+      for (const [vel, col] of [[VP, '250,204,21'], [VS, '251,146,60']]) {
+        const r2 = (vel * el) ** 2 - so.depth ** 2; if (r2 <= 0) continue;
+        const r = Math.sqrt(r2) * this.kmPx; if (r > w * 2.5) continue;
+        ctx.beginPath(); ctx.arc(ex, ey, r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${col},.07)`; ctx.fill(); ctx.strokeStyle = `rgba(${col},.85)`; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.stroke(); ctx.setLineDash([]);
+      }
+      star(ctx, ex, ey, 7, 3, '#fb923c');
+      ctx.fillStyle = '#fed7aa'; ctx.font = 'bold 11px "JetBrains Mono", monospace'; ctx.fillText(`M${so.M.toFixed(1)}`, ex + 9, ey - 6);
     }
     if (sc && st.reveal) {
       const [ex, ey] = P(sc.q.lon, sc.q.lat);

@@ -1,6 +1,6 @@
 // 台灣地震速報模擬：自訂／預設地震 → 測站觸發 → 本機定位 → 發布速報（一般／緊急）→ 鄉鎮震度預測與倒數
 import { STATIONS, TOWNS, loadTowns, townAt, describeEpicenter, distKm } from './geo.js';
-import { createScenario, locate, locateRobust, noticeCandidates, NOTICE, triggerOf, predictAt, loadModel, MODEL, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
+import { createScenario, locate, locateRobust, noticeCandidates, NOTICE, triggerOf, predictAt, loadModel, sourceDist, arrived, pdOf, MODEL, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
 import { siteOf, siteClass } from './site.js';
 import { INTENSITY_COLORS, intensity, intensityIndex } from '../detector.js';
 import { TaiwanMap, shortInt } from './map.js';
@@ -130,7 +130,8 @@ export class TaiwanEEW {
     const h = this.home;
     const R = Math.hypot(distKm(h.lon, h.lat, q.lon, q.lat), q.depth);
     const tp = t0 + (R / VP) * 1000, ts = t0 + (R / VS) * 1000;
-    this.homeTruth = predictAt(q.M, R, h.site, q.depth);
+    this.homeTruth = predictAt(q.M, sourceDist(h.lon, h.lat, q), h.site, q.depth);
+    this.homePd = pdOf(q.M, R);   // 本站地震儀的 P 波位移（若由本站先偵測到，也能用來估規模）
     // 回放真實地震時，若你家 10 km 內有實測測站，就用「當時實際量到的」當作你家的真實搖晃
     if (this.real) {
       let best = null;
@@ -156,8 +157,8 @@ export class TaiwanEEW {
   // 目前所有觸發（含誤觸發）；本站地震儀偵測到 P 波也算一站
   currentPicks(now) {
     const out = [];
-    for (const s of this.sc.stations) { const tr = triggerOf(s); if (tr.tp <= now) out.push({ ...s, ...tr }); }
-    if (this.localPick) out.push({ name: '本站', lon: this.home.lon, lat: this.home.lat, tp: this.localPick, pAmp: this.homeTruth.pga * 0.3, site: this.home.site, local: true });
+    for (const s of this.sc.stations) { const tr = triggerOf(s); if (arrived(tr, now)) out.push({ ...s, ...tr }); }
+    if (this.localPick) out.push({ name: '本站', lon: this.home.lon, lat: this.home.lat, tp: this.localPick, pAmp: this.homeTruth.pga * 0.3, pd: this.homePd, site: this.home.site, local: true });
     return out.sort((a, b) => a.tp - b.tp);
   }
 
@@ -217,7 +218,7 @@ export class TaiwanEEW {
           const near = idle.map(s => [distKm(s.lon, s.lat, recent[0].lon, recent[0].lat), s]).filter(([d]) => d < 150)
             .sort((a, b) => a[0] - b[0]).slice(0, 40).map(([, s]) => s);
           const pv = locate(recent.slice(0, 3), near, now);
-          if (pv.M >= NOTICE.MIN_M) {
+          if (pv.mPartial || pv.M >= NOTICE.MIN_M) {   // 規模還在估算（Pd 視窗未滿）時不擋
             Object.assign(pv, { prelim: true, n: recent.length, used: recent, rejected: [], rule: cand.rule });
             const first = !this.prelim;
             if (first) this.prelim = { since: recent[0].tp };
@@ -283,7 +284,7 @@ export class TaiwanEEW {
   // 每秒用最新的測站實測（PLUM）更新各鄉鎮預估與警示區，震源解不變
   refreshForecast(now) {
     const sol = this.sol; if (!sol) return;
-    this.townInts = TOWNS.map(tw => this.plumMax(predictAt(sol.M, hypo(tw.c[0], tw.c[1], sol), tw, sol.depth).n, tw));
+    this.townInts = TOWNS.map(tw => this.plumMax(predictAt(sol.M, sourceDist(tw.c[0], tw.c[1], sol), tw, sol.depth).n, tw));
     let mi = 0; this.townInts.forEach((v, i) => { if (intensityIndex(v) > intensityIndex(this.townInts[mi])) mi = i; });
     this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
     this.region = this.computeRegion(sol);
@@ -293,7 +294,7 @@ export class TaiwanEEW {
   // 套用一個震源解：計算各鄉鎮預估震度與陸地最大震度，以及區域警示範圍
   setForecast(sol, now, calcMs) {
     this.sol = sol; sol.calcMs = calcMs; sol.issued = now;
-    this.townInts = TOWNS.map(tw => this.plumMax(predictAt(sol.M, hypo(tw.c[0], tw.c[1], sol), tw, sol.depth).n, tw));
+    this.townInts = TOWNS.map(tw => this.plumMax(predictAt(sol.M, sourceDist(tw.c[0], tw.c[1], sol), tw, sol.depth).n, tw));
     let mi = 0; this.townInts.forEach((v, i) => { if (intensityIndex(v) > intensityIndex(this.townInts[mi])) mi = i; });
     this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
     this.region = this.computeRegion(sol);
@@ -328,9 +329,9 @@ export class TaiwanEEW {
   //   震央可能偏差 u 公里 → 格子到震央的距離先減去 u（假設震央其實更靠近它）
   //   規模可能偏差 σ     → 用 M + σ 計算
   // 保守估計達警示門檻（≥ 4 級）的格子就是警示區；都沒有時改用 3 級門檻。
-  // 固定大小的正方形網格：邊長 10.00 km（以公里換算經緯度，四邊等長，不是經緯度格）
-  //   經度每格 = 10 ÷ (111.32 × cos 23.7°) = 0.09810°，緯度每格 = 10 ÷ 110.57 = 0.09044°
-  static SIDE_KM = 10;
+  // 固定大小的正方形網格：邊長 25.00 km（以公里換算經緯度，四邊等長，不是經緯度格）
+  //   經度每格 = 25 ÷ (111.32 × cos 23.7°) = 0.24525°，緯度每格 = 25 ÷ 110.57 = 0.22610°
+  static SIDE_KM = 25;
   // 達此規模（含規模不確定度）時，警示區加入預估式誤差保守量。
   // 12 個真實地震測試：門檻 M6.5 時中型地震（M5.5～6.1）實測 ≥4 級地區只框到 27～64%；
   // 改為 M5.0 後提升到 73～93%，多出的過度警示多半 0～4 站
@@ -367,13 +368,15 @@ export class TaiwanEEW {
     this.cells ??= this.buildCells();
     const n = sol.n;
     const u = sol.prelim ? (n <= 1 ? 25 : n === 2 ? 15 : 10) : (n < 6 ? 5 : 3);           // 震央不確定度（km）
-    const sigM = sol.prelim ? (n <= 1 ? 0.8 : 0.5) : (n < 6 ? 0.3 : 0.15);                 // 規模不確定度
+    // 規模不確定度；Pd 還沒收滿 3 秒時規模必定偏低（Pd 只會越來越大），再多加 0.5
+    const sigM = (sol.prelim ? (n <= 1 ? 0.8 : 0.5) : (n < 6 ? 0.3 : 0.15)) + (sol.mPartial ? 0.5 : 0);
     // 模型誤差保守量：M ≥ 5.0 時，預估式本身的誤差（交叉驗證 1 個標準差，約 ×2）也算進去。
     // 例：2024 花蓮 0403，臺北實測 5 弱但預估式只到 4 級，加上這一項後臺北會被框進警示區
     const big = sol.M + sigM >= TaiwanEEW.BIG_M;
     const sA = big ? (MODEL?.test?.gmpeSite?.pgaRmsLog10 ?? 0.3) : 0, sV = big ? (MODEL?.test?.gmpeSite?.pgvRmsLog10 ?? 0.3) : 0;
     const conservative = (lon, lat, site) => {
-      const p = predictAt(sol.M + sigM, Math.hypot(Math.max(0, distKm(lon, lat, sol.lon, sol.lat) - u), sol.depth), site, sol.depth);
+      const rd = sourceDist(lon, lat, { ...sol, M: sol.M + sigM }), e2 = Math.sqrt(Math.max(0, rd * rd - sol.depth * sol.depth));
+      const p = predictAt(sol.M + sigM, Math.hypot(Math.max(0, e2 - u), sol.depth), site, sol.depth);   // 離斷層的水平距離再減去震央誤差
       return big ? intensity(p.pga * 10 ** sA, p.pgv * 10 ** sV) : p.n;
     };
     const lv = new Map();
@@ -428,8 +431,8 @@ export class TaiwanEEW {
   isEmergency() { return !this.sol.prelim && this.sol.M > EMERGENCY_M && intensityIndex(this.maxObs) >= intensityIndex(EMERGENCY_INT); }
 
   homePred(so) {
-    const h = this.home, R = hypo(h.lon, h.lat, so);
-    const p = predictAt(so.M, R, h.site, so.depth);
+    const h = this.home, R = hypo(h.lon, h.lat, so), Rr = sourceDist(h.lon, h.lat, so);
+    const p = predictAt(so.M, Rr, h.site, so.depth);   // 震度用斷層距離；抵達時間仍用震源距離
     return { ...p, n: this.plumMax(p.n, h.site), ts: so.t0 + (R / VS) * 1000 };   // 你所在地也套用 PLUM
   }
 
@@ -522,7 +525,7 @@ export class TaiwanEEW {
         </div>
       </div>
       <div class="eew-facts">
-        <div><span class="k">規模</span><b>${prelim ? '估算中' : 'M ' + so.M.toFixed(1)}</b></div>
+        <div><span class="k">規模</span><b>${prelim ? '估算中' : 'M ' + so.M.toFixed(1)}${!prelim && so.mPartial ? '<small> 估算中</small>' : ''}</b></div>
         <div><span class="k">深度</span><b>${so.n < 4 ? '待定' : so.depth.toFixed(0) + ' km'}</b></div>
         <div><span class="k">最大震度</span><b style="color:${INTENSITY_COLORS[ml.n]}">${ml.n} 級</b></div>
       </div>
@@ -609,7 +612,7 @@ export class TaiwanEEW {
     const sc = siteClass(t.vs30);
     let pred = '';
     if (this.sol && this.townInts) {
-      const r = predictAt(this.sol.M, hypo(t.c[0], t.c[1], this.sol), t, this.sol.depth);
+      const r = predictAt(this.sol.M, sourceDist(t.c[0], t.c[1], this.sol), t, this.sol.depth);
       pred = `<div>預估震度 ${badge(r.n)} PGA ${r.pga.toFixed(0)} gal · PGV ${r.pgv.toFixed(1)} cm/s</div>`;
     }
     tip.innerHTML = `<b>${t.county} ${t.name}</b><div>Vs30 ≈ ${t.vs30} m/s · ${sc.name}</div><div>地盤放大 PGA ×${t.ampA.toFixed(2)}、PGV ×${t.ampV.toFixed(2)}</div>${pred}`;

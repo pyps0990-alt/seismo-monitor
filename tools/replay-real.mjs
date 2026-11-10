@@ -30,16 +30,16 @@ for (const ev of EVENTS) {
     const trig = sc.stations.map(s => ({ ...s, ...E.triggerOf(s) })).sort((a, b) => a.tp - b.tp);
     let noticeT = null, firstT = null, sol = null;
     for (let i = 0; i < trig.length; i++) {
-      const now = trig[i].tp + 300, picks = trig.filter(p => p.tp <= now), idle = trig.filter(p => p.tp > now);
+      const now = trig[i].tp + E.PD.LATENCY_MS + 300, picks = trig.filter(p => E.arrived(p, now)), idle = trig.filter(p => !E.arrived(p, now));
       if (noticeT == null) {
         const c = E.noticeCandidates(picks, now);
         if (c) {
           const pv = E.locate(c.picks.slice(0, 3), idle.slice(0, 40), now);
-          if (pv.M >= E.NOTICE.MIN_M) { noticeT = now; if (c.picks.every(p => p.isFalse)) r.falseNotice++; }
+          if (pv.mPartial || pv.M >= E.NOTICE.MIN_M) { noticeT = now; if (c.picks.every(p => p.isFalse)) r.falseNotice++; }
         }
       }
       const s = E.locateRobust(picks, idle, now);
-      if (s) { if (firstT == null) firstT = now; sol = s; if (s.n >= 15) break; }
+      if (s) { if (firstT == null) firstT = now; sol = s; if (s.n >= 15 && s.nPd >= 5) break; }   // 評分時至少 5 站已收滿 3 秒 P 波（Pd 完整）
     }
     if (noticeT != null) r.notice.push(noticeT / 1000);
     if (!sol) continue;
@@ -48,7 +48,7 @@ for (const ev of EVENTS) {
     // 用最後一報的震源解，預估每個實測測站的震度，與實測比較
     let ex = 0, w1 = 0;
     for (const st of ev.stations) {
-      const R = Math.hypot(G.distKm(st.lon, st.lat, sol.lon, sol.lat), sol.depth);
+      const R = E.sourceDist(st.lon, st.lat, sol);   // 大地震用有限斷層距離
       const p = E.predictAt(sol.M, R, st.site, sol.depth).n;
       const d = Math.abs(D.intensityIndex(p) - D.intensityIndex(st.obs));
       if (d === 0) ex++; if (d <= 1) w1++;

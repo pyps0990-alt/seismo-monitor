@@ -30,7 +30,6 @@ export function predictPGV(M, R, depth = 10) {
   return predictPGA(M, R) * 10 ** (0.2 * M - 2.1);
 }
 // log10(PGA) 對規模的斜率（反推規模用）；有交互項時斜率隨距離改變
-const magSlope = R => (MODEL ? MODEL.pga.c[1] + (MODEL.pga.c[5] ?? 0) * Math.log10(R + MODEL.pga.h) : 0.5);
 // 對應的 S 波主頻（給模擬器產生波形用）：PGV = PGA / (2πf)，以 30 km 處估算
 export function dominantFreq(M) { return predictPGA(M, 30) / (2 * Math.PI * predictPGV(M, 30)); }
 export const predictIntensity = (M, R, depth) => intensity(predictPGA(M, R, depth), predictPGV(M, R, depth));
@@ -46,6 +45,36 @@ const P_RATIO = 0.3; // P 波初期振幅約為 S 波 PGA 的比例（簡化）
 const gauss = () => { let u = 0; for (let i = 0; i < 6; i++) u += Math.random(); return (u - 3) / Math.SQRT1_2 / 1.73; };
 
 export function hypoDist(lon, lat, q) { return Math.hypot(distKm(lon, lat, q.lon, q.lat), q.depth); }
+
+// ---- 有限斷層距離（FinDer 概念，Böse et al. 2012, GJI）----
+// 大地震的震源不是一個點，而是一條數十公里長的斷層；地動強弱取決於「離斷層面多近」，不是離震央多近。
+// 斷層長度：Wells & Coppersmith (1994, BSSA) 地下破裂長度「所有斷層類型」回歸 log10(L) = −2.44 + 0.59·M
+//   （此係數依該論文內容引用，未能從摘要直接核對）
+// 走向：即時系統還不知道真實走向，先用台灣主要構造的走向（北北東，約 20°）作為先驗
+// 【實驗結果：目前停用】12 個真實地震回放（各 30 次）比較，啟用（M≥6.5）時：
+//   集集 震度命中 50% → 36%、差 1 級內 92% → 85%；0403 64% → 60%；整體 60% → 58%
+//   原因：預估式是用「震源距離」訓練的，直接換成斷層距離會高估近處；固定走向也不一定對（集集為南北向單側破裂）
+//   要真正有效需要：用斷層距離重新訓練預估式＋即時估計走向（FinDer 以測站振幅樣板比對求走向）
+export const FINITE = { MIN_M: 99, STRIKE_DEG: 20 };
+export function ruptureLengthKm(M) { return 10 ** (-2.44 + 0.59 * M); }
+export function sourceDist(lon, lat, src) {
+  if (src.M < FINITE.MIN_M) return hypoDist(lon, lat, src);
+  const KX = 111.32 * Math.cos(23.7 * Math.PI / 180), KY = 110.57;
+  const half = ruptureLengthKm(src.M) / 2, th = FINITE.STRIKE_DEG * Math.PI / 180;
+  const ux = Math.sin(th), uy = Math.cos(th);                         // 走向單位向量（東、北）
+  const px = (lon - src.lon) * KX, py = (lat - src.lat) * KY;          // 以震央為原點（km）
+  const t = Math.max(-half, Math.min(half, px * ux + py * uy));        // 投影到斷層線段上
+  return Math.hypot(px - t * ux, py - t * uy, src.depth);
+}
+
+// ---- P 波規模（Pd 法，Wu & Zhao 2006, GRL）----
+// Pd＝P 波到達後前 3 秒的最大位移（cm）：log10(Pd) = −3.463 + 0.729·M − 1.374·log10(R) ± 0.305
+// 真實系統的限制：資料傳到中心約需 1 秒，每站要收滿 3 秒 P 波才有完整 Pd（Hsiao et al. 2009 氣象署系統）
+export const PD = { A: -3.463, B: 0.729, C: -1.374, SIGMA: 0.305, WINDOW_MS: 3000, LATENCY_MS: 1000 };
+export const pdOf = (M, R) => 10 ** (PD.A + PD.B * M + PD.C * Math.log10(Math.max(R, 1)));
+export const magFromPd = (pd, R) => (Math.log10(pd) - PD.A - PD.C * Math.log10(Math.max(R, 1))) / PD.B;
+// 觸發資料是否已傳到中心（考慮傳輸延遲）
+export const arrived = (p, now) => p.tp + PD.LATENCY_MS <= now;
 
 // 預設情境（參考台灣常見震源區）
 export const PRESETS = [
@@ -70,16 +99,18 @@ export function randomQuake() {
 // 建立情境：q = {lon, lat, depth, M}，t0 = 發震時間（ms）
 export function createScenario(q, t0) {
   const stations = STATIONS.map(s => {
-    const R = hypoDist(s.lon, s.lat, q);
+    const R = hypoDist(s.lon, s.lat, q);                          // 走時用震源距離（P、S 波由震源出發）
+    const Rr = sourceDist(s.lon, s.lat, q);                       // 地動強弱用斷層距離（大地震時較近）
     const site = siteOf(s.lon, s.lat);                            // 地形場址效應
     const scatter = 10 ** (0.12 * gauss());                       // 其餘隨機變異
-    const pga = predictPGA(q.M, R, q.depth) * site.ampA * scatter;
+    const pga = predictPGA(q.M, Rr, q.depth) * site.ampA * scatter;
     return {
       ...s, R, site,
       tp: t0 + (R / VP) * 1000 + gauss() * 60,                    // P 波到時 + 挑波誤差 ±60 ms
       ts: t0 + (R / VS) * 1000,
-      pAmp: pga * P_RATIO * 10 ** (0.1 * gauss()),                // 觀測到的 P 波初期振幅
-      pga, pgv: predictPGV(q.M, R, q.depth) * site.ampV * scatter,
+      pAmp: pga * P_RATIO * 10 ** (0.1 * gauss()),                // 觀測到的 P 波初期振幅（gal，判斷是否為雜訊用）
+      pd: pdOf(q.M, R) * 10 ** (PD.SIGMA * gauss()),              // P 波前 3 秒最大位移（cm，估規模用）含文獻的離散度
+      pga, pgv: predictPGV(q.M, Rr, q.depth) * site.ampV * scatter,
     };
   });
   // 誤觸發：隨機 2～4 個測站在地震前後被雜訊（車輛、施工、儀器故障）觸發
@@ -103,8 +134,9 @@ export function createScenario(q, t0) {
 
 // 測站觸發時間：真的 P 波，或更早的誤觸發
 export function triggerOf(s) {
-  if (s.falseTp != null && s.falseTp < s.tp) return { tp: s.falseTp, pAmp: s.falseAmp, isFalse: true };
-  return { tp: s.tp, pAmp: s.pAmp, isFalse: false };
+  // 誤觸發的位移量很小（雜訊多為高頻，積分成位移後只有 1e-4～1e-3 cm 等級）
+  if (s.falseTp != null && s.falseTp < s.tp) return { tp: s.falseTp, pAmp: s.falseAmp, pd: 1e-4 * 10 ** Math.random(), isFalse: true };
+  return { tp: s.tp, pAmp: s.pAmp, pd: s.pd, isFalse: false };
 }
 
 // ---- 關聯（防誤報）----
@@ -153,7 +185,8 @@ function searchGrid(picks, idle, now, lonR, latR, step, depths) {
         let sa = 0; for (let i = 0; i < n; i++) sa += Math.abs(d0[i] - t0);
         let cost = sa / n;
         for (const s of idle) {
-          const late = now - (t0 + (Math.hypot(distKm(lon, lat, s.lon, s.lat), depth) / VP) * 1000);
+          // 「該到未到」：資料要再過 LATENCY 才會傳到中心，所以只有在 now − 延遲 之前就該到的才算
+          const late = now - PD.LATENCY_MS - (t0 + (Math.hypot(distKm(lon, lat, s.lon, s.lat), depth) / VP) * 1000);
           if (late > 0) cost += late;
         }
         if (n < 3) cost += 2 * distKm(lon, lat, first.lon, first.lat);
@@ -218,13 +251,18 @@ export function locate(picks, idle = [], now = picks[picks.length - 1]?.tp) {
   // 細搜尋：在最佳點附近 0.01°
   const depths = []; if (picks.length === 3) { for (let d = Math.max(4, coarse.depth - 10); d <= coarse.depth + 10; d += 5) depths.push(d); } else if (many) { for (let d = Math.max(2, coarse.depth - 15); d <= coarse.depth + 15; d += 2) depths.push(d); } else depths.push(10);
   const fine = searchGrid(picks, idle, now, [coarse.lon - 0.12, coarse.lon + 0.12], [coarse.lat - 0.12, coarse.lat + 0.12], 0.01, depths);
-  // 規模：每站由 P 波振幅反推（先扣掉該站的場址放大），取中位數以排除離群值
-  const Ms = picks.map(p => {
+  // 規模：Pd 法（Wu & Zhao 2006）。只用已收滿 3 秒 P 波（且已傳到中心）的測站；
+  // 還沒有任何一站收滿時，先用目前收到的部分視窗（Pd 只會越來越大 → 規模偏低，標示「估算中」），取中位數
+  const withPd = picks.filter(p => p.pd > 0);
+  const winOf = p => (now - PD.LATENCY_MS - p.tp) / PD.WINDOW_MS;     // 已收到的 P 波視窗比例
+  const full = withPd.filter(p => winOf(p) >= 1);
+  const use = full.length ? full : withPd;
+  const Ms = use.map(p => {
     const R = Math.hypot(distKm(fine.lon, fine.lat, p.lon, p.lat), fine.depth);
-    // 預估式對規模是線性的：log10(PGA) = log10(PGA@M=0) + 斜率·M → 反解 M
-    return (Math.log10(p.pAmp / P_RATIO / (p.site?.ampA ?? 1)) - Math.log10(predictPGA(0, R, fine.depth))) / magSlope(R);
+    const w = Math.max(0.15, Math.min(1, winOf(p)));
+    return magFromPd(full.length ? p.pd : p.pd * w, R);
   }).sort((a, b) => a - b);
   const mid = Ms.length >> 1;
-  const M = Ms.length % 2 ? Ms[mid] : (Ms[mid - 1] + Ms[mid]) / 2;
-  return { ...fine, M: Math.round(M * 10) / 10, n: picks.length };
+  const M = Ms.length ? (Ms.length % 2 ? Ms[mid] : (Ms[mid - 1] + Ms[mid]) / 2) : 4.0;
+  return { ...fine, M: Math.round(M * 10) / 10, n: picks.length, nPd: full.length, mPartial: !full.length };
 }

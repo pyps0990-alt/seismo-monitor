@@ -129,7 +129,14 @@ export class TaiwanMap {
     // P / S 波：實線＋半透明填色。圓心＝目前推算的震央與發震時間；
     // 每次新一報改變震央，圓心就跟著移動（第一報之前不畫）
     const sc = st.scenario;
-    const so0 = st.solution;
+    // 震央每次修正時，圖形（P/S 波圓、震央星號）平滑移到新位置，不會消失或跳動
+    if (st.solution) {
+      const t = st.solution, c = this.cur;
+      this.cur = c && c.ref === t.ref ? { ...c } : (c ? { ...c, ref: t.ref } : { lon: t.lon, lat: t.lat, depth: t.depth, t0: t.t0, ref: t.ref });
+      const k = 0.18, cc = this.cur;
+      cc.lon += (t.lon - cc.lon) * k; cc.lat += (t.lat - cc.lat) * k; cc.depth += (t.depth - cc.depth) * k; cc.t0 += (t.t0 - cc.t0) * k;
+    } else this.cur = null;
+    const so0 = this.cur;
     if (so0) {
       const el = (st.now - so0.t0) / 1000;
       const [ex, ey] = P(so0.lon, so0.lat);
@@ -229,7 +236,7 @@ export class TaiwanMap {
     }
 
     // 推算的震央
-    const so = st.solution;
+    const so = this.cur;
     if (so) {
       const [x, y] = P(so.lon, so.lat);
       const pulse = 10 + 6 * Math.abs(Math.sin(st.now / 300));

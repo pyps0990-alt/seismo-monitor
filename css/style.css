@@ -225,6 +225,10 @@ body.eew-emergency::after { content: ""; position: fixed; inset: 0; z-index: 90;
 .eew-place { font-size: .82rem; color: var(--fg2); margin-top: 2px; }
 .eew-zone { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 6px; font-size: .75rem; color: var(--mut); background: rgba(255,255,255,.06); }
 .eew-zone.in { color: #fff; background: #b45309; font-weight: 700; }
+.eew-worst { margin-top: 6px; font-size: .8rem; color: var(--fg2); }
+.eew-worst b { display: inline-block; min-width: 2em; text-align: center; padding: 0 6px; border-radius: 6px; color: #0b0e13; font-family: var(--mono); }
+.eew-worst small { color: var(--mut); }
+.town .wst { margin-left: 6px; padding: 0 5px; border-radius: 4px; font-style: normal; font-size: .68rem; font-weight: 700; color: #0b0e13; opacity: .85; }
 /* 第二層：地震概況 */
 .eew-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 10px; padding-top: 12px; border-top: 1px solid var(--line); }
 .eew-facts b { display: block; font-family: var(--mono); font-size: 1.15rem; }

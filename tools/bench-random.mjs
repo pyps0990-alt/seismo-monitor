@@ -14,10 +14,11 @@ let tms = 0, cnt = 0, falseAlarms = 0, missed = 0;
 for (let k = 0; k < N; k++) {
   const q = E.randomQuake(), sc = E.createScenario(q, 0);
   const trig = sc.stations.map(s => ({ ...s, ...E.triggerOf(s) })).sort((a, b) => a.tp - b.tp);
+    let prevSol = null, lastFull = -1e9;
   let d1 = false, d6 = false, dp = false;
   for (let i = 0; i < trig.length && !(d6 && dp); i++) {
     const now = trig[i].tp + E.PD.LATENCY_MS + 300, picks = trig.filter(p => E.arrived(p, now)), idle = trig.filter(p => !E.arrived(p, now));
-    const t = performance.now(); const s = E.locateRobust(picks, idle, now); tms += performance.now() - t; cnt++;
+    const t = performance.now(); const full = !prevSol || now - lastFull > 3000; if (full) lastFull = now; const s = E.locateRobust(picks, idle, now, full ? null : prevSol); if (s) prevSol = s; tms += performance.now() - t; cnt++;
     if (!s) continue;
     const err = [G.distKm(q.lon, q.lat, s.lon, s.lat), Math.abs(q.M - s.M), now / 1000];
     if (!d1) { first.push(err); d1 = true; }

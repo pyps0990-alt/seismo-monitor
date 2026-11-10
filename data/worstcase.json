@@ -1,0 +1,1 @@
+{"q":0.95,"early":{"a":1.549,"v":1.763},"final":{"a":0.633,"v":0.681},"note":"log10 安全邊際；由 tools/calibrate-worst.mjs 產生"}

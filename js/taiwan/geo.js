@@ -41,10 +41,32 @@ function buildStations() {
     const [lon, lat] = t.c;
     if (land.every(s => distKm(lon, lat, s.lon, s.lat) >= 7)) land.push({ name: `${t.county.slice(0, 2)}${t.name}`, lon, lat, type: 'land' });
   }
-  STATIONS = [...land, ...OBS.map(([name, lon, lat]) => ({ name, lon, lat, type: 'obs' }))];
+  // 海底站加密，只加在東部海域（台灣大多數有感地震發生在東部外海的菲律賓海板塊隱沒帶）：
+  //   近岸（距鄉鎮中心 8～35 km）：每約 15 km（0.14°）一站
+  //   外海（35 km 以外）：往東延伸到琉球海溝附近（約東經 123.5°），每約 25 km（0.24°）一站
+  //   北部海域（北緯 24.85° 以北）不自動加站，只保留原本示意的海纜站
+  const obs = OBS.map(([name, lon, lat]) => ({ name, lon, lat, type: 'obs' }));
+  const onLand = (lon, lat) => TOWNS.some(t => lon >= t.bbox[0] && lon <= t.bbox[2] && lat >= t.bbox[1] && lat <= t.bbox[3] && t.rings.some(r => pointInRing(lon, lat, r)));
+  const minDist = (lon, lat) => { let d = Infinity; for (const t of TOWNS) d = Math.min(d, distKm(lon, lat, t.c[0], t.c[1])); return d; };
+  const add = (lon, lat, gap) => {
+    if (obs.some(o => distKm(o.lon, o.lat, lon, lat) < gap)) return;
+    obs.push({ name: `海底 ${lon.toFixed(2)}E ${lat.toFixed(2)}N`, lon: +lon.toFixed(3), lat: +lat.toFixed(3), type: 'obs' });
+  };
+  const eastSea = (lon, lat) => lat < 24.85 && (lon >= 121.3 || (lat < 22.5 && lon >= 120.9));
+  for (let lat = 21.7; lat <= 24.85; lat += 0.14) for (let lon = 120.9; lon <= 123.6; lon += 0.14) {   // 近岸
+    if (!eastSea(lon, lat) || onLand(lon, lat)) continue;
+    const d = minDist(lon, lat);
+    if (d >= 8 && d <= 35) add(lon, lat, 10);
+  }
+  for (let lat = 21.7; lat <= 24.85; lat += 0.24) for (let lon = 121.3; lon <= 123.6; lon += 0.24) {   // 外海到海溝
+    if (!eastSea(lon, lat) || onLand(lon, lat)) continue;
+    const d = minDist(lon, lat);
+    if (d > 35 && d <= 230) add(lon, lat, 18);
+  }
+  STATIONS = [...land, ...obs];
 }
 
-export const BOUNDS = { lonMin: 119.25, lonMax: 122.6, latMin: 21.75, latMax: 25.5 };
+export const BOUNDS = { lonMin: 119.25, lonMax: 123.8, latMin: 21.6, latMax: 25.5 };   // 東界延伸到琉球海溝附近
 const LAT0 = 23.7, KX = 111.32 * Math.cos(LAT0 * Math.PI / 180), KY = 110.57;
 
 // 平面近似距離（公里），台灣尺度誤差 < 1%

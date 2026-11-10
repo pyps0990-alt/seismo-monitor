@@ -28,6 +28,7 @@ for (const ev of EVENTS) {
   for (let k = 0; k < RUNS; k++) {
     const sc = E.createScenario(q, 0);
     const trig = sc.stations.map(s => ({ ...s, ...E.triggerOf(s) })).sort((a, b) => a.tp - b.tp);
+    let prevSol = null, lastFull = -1e9;
     let noticeT = null, firstT = null, sol = null;
     for (let i = 0; i < trig.length; i++) {
       const now = trig[i].tp + E.PD.LATENCY_MS + 300, picks = trig.filter(p => E.arrived(p, now)), idle = trig.filter(p => !E.arrived(p, now));
@@ -38,7 +39,7 @@ for (const ev of EVENTS) {
           if (pv.mPartial || pv.M >= E.NOTICE.MIN_M) { noticeT = now; if (c.picks.every(p => p.isFalse)) r.falseNotice++; }
         }
       }
-      const s = E.locateRobust(picks, idle, now);
+      const full = !prevSol || now - lastFull > 3000; if (full) lastFull = now; const s = E.locateRobust(picks, idle, now, full ? null : prevSol); if (s) prevSol = s;
       if (s) { if (firstT == null) firstT = now; sol = s; if (s.n >= 15 && s.nPd >= 5) break; }   // 評分時至少 5 站已收滿 3 秒 P 波（Pd 完整）
     }
     if (noticeT != null) r.notice.push(noticeT / 1000);

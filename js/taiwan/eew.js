@@ -76,6 +76,20 @@ export const magFromPd = (pd, R) => (Math.log10(pd) - PD.A - PD.C * Math.log10(M
 // 觸發資料是否已傳到中心（考慮傳輸延遲）
 export const arrived = (p, now) => p.tp + PD.LATENCY_MS <= now;
 
+// ---- 最嚴重可能震度（95% 信心）----
+// 由 tools/calibrate-worst.mjs 用 12 個真實地震回放校正：各速報階段「實測比預估大多少」的 95 百分位（log10）。
+// 第一報（Pd 多半未收滿）不確定性大，邊際也大；至少 3 站收滿 3 秒 P 波後邊際縮小。
+export let WORST = null;
+export async function loadWorst(url = 'data/worstcase.json') {
+  try { WORST = await (await fetch(url)).json(); } catch { WORST = null; }
+  return WORST;
+}
+export function worstOf(p, sol) {
+  if (!WORST || !sol || sol.prelim) return null;
+  const m = sol.nPd >= 3 ? WORST.final : WORST.early;
+  return intensity(p.pga * 10 ** m.a, p.pgv * 10 ** m.v);
+}
+
 // 預設情境（參考台灣常見震源區）
 export const PRESETS = [
   { name: '花蓮外海', lon: 121.75, lat: 23.85, depth: 15, M: 6.6 },
@@ -217,10 +231,10 @@ export function noticeCandidates(picks, now, cfg = NOTICE) {
 
 // 穩健定位：關聯 → 定位 → 剔除殘差 > 1 秒的觸發 → 再定位
 // 回傳 { ...解, used: 採用的觸發, rejected: 被排除的觸發 }
-export function locateRobust(allPicks, idle, now) {
+export function locateRobust(allPicks, idle, now, prev = null) {
   let used = associate(allPicks);
   if (used.length < MIN_ISSUE) return null;
-  let sol = locate(used.slice(0, 25), nearIdle(idle, used[0]), now);
+  let sol = locate(used.slice(0, 25), nearIdle(idle, used[0]), now, prev);
   // 少站時逐一剔除檢驗：拿掉某個觸發後若明顯更一致（殘差＋「該到未到」懲罰下降一半以上），就視為誤觸發
   if (used.length <= 6 && sol.cost > 300) {
     for (let i = 0; i < used.length && used.length > MIN_ISSUE; i++) {
@@ -233,7 +247,7 @@ export function locateRobust(allPicks, idle, now) {
     const res = used.map(p => Math.abs(p.tp - sol.t0 - (Math.hypot(distKm(sol.lon, sol.lat, p.lon, p.lat), sol.depth) / VP) * 1000));
     let wi = 0; res.forEach((r, i) => { if (r > res[wi]) wi = i; });
     if (res[wi] <= 700 || used.length - 1 < MIN_ISSUE) break;
-    used = used.filter((_, i) => i !== wi); sol = locate(used.slice(0, 25), nearIdle(idle, used[0]), now);
+    used = used.filter((_, i) => i !== wi); sol = locate(used.slice(0, 25), nearIdle(idle, used[0]), now, prev);
   }
   return { ...sol, n: used.length, used, rejected: allPicks.filter(p => !used.includes(p)) };
 }
@@ -242,15 +256,22 @@ const nearIdle = (idle, first) => idle.map(s => [distKm(s.lon, s.lat, first.lon,
   .filter(([d]) => d < 150).sort((a, b) => a[0] - b[0]).slice(0, 40).map(([, s]) => s);
 
 // picks：已觸發測站（依到時排序）；idle：尚未觸發的測站；now：目前時間
-export function locate(picks, idle = [], now = picks[picks.length - 1]?.tp) {
+export function locate(picks, idle = [], now = picks[picks.length - 1]?.tp, prev = null) {
   if (!picks.length) return null;
   const many = picks.length >= 4;
   // 粗搜尋：0.1°；4 站以上才同時解深度，少站時固定 10 km
   const f = picks[0], box = 1.4; // 震央一定在第一站附近（P 波最先到），只搜尋 ±1.4°
-  const coarse = searchGrid(picks, idle, now, [Math.max(118.5, f.lon - box), Math.min(123.5, f.lon + box)], [Math.max(20.5, f.lat - box), Math.min(26.5, f.lat + box)], 0.1, many ? [5, 10, 20, 30, 50, 75, 100] : picks.length === 3 ? [10, 30, 60] : [10]);
+  // 接續搜尋：已有上一報的解且站數夠多時，只在上次震央 ±0.3° 內搜尋（快約 7 倍，避免畫面卡頓）；
+  // 呼叫端每 3 秒會不帶 prev 做一次完整搜尋，避免卡在錯誤的位置
+  const warm = prev && picks.length >= 5;
+  const coarse = warm
+    ? searchGrid(picks, idle, now, [prev.lon - 0.3, prev.lon + 0.3], [prev.lat - 0.3, prev.lat + 0.3], 0.05, [-20, -10, 0, 10, 20].map(d => Math.max(3, prev.depth + d)))
+    : searchGrid(picks, idle, now, [Math.max(118.5, f.lon - box), Math.min(123.8, f.lon + box)], [Math.max(20.5, f.lat - box), Math.min(26.5, f.lat + box)], 0.1, many ? [5, 10, 20, 30, 50, 75, 100] : picks.length === 3 ? [10, 30, 60] : [10]);
   // 細搜尋：在最佳點附近 0.01°
-  const depths = []; if (picks.length === 3) { for (let d = Math.max(4, coarse.depth - 10); d <= coarse.depth + 10; d += 5) depths.push(d); } else if (many) { for (let d = Math.max(2, coarse.depth - 15); d <= coarse.depth + 15; d += 2) depths.push(d); } else depths.push(10);
-  const fine = searchGrid(picks, idle, now, [coarse.lon - 0.12, coarse.lon + 0.12], [coarse.lat - 0.12, coarse.lat + 0.12], 0.01, depths);
+  const depths = []; if (picks.length === 3) { for (let d = Math.max(4, coarse.depth - 10); d <= coarse.depth + 10; d += 5) depths.push(d); } else if (many) { for (let d = Math.max(2, coarse.depth - 15); d <= coarse.depth + 15; d += 3) depths.push(d); } else depths.push(10);
+  // 細搜尋分兩段：先 0.02°（約 2 km）找區域，再在最佳點 ±0.02° 內以 0.005° 精修（同樣精度、計算量約少 5 倍）
+  const midG = searchGrid(picks, idle, now, [coarse.lon - 0.12, coarse.lon + 0.12], [coarse.lat - 0.12, coarse.lat + 0.12], 0.02, depths);
+  const fine = searchGrid(picks, idle, now, [midG.lon - 0.02, midG.lon + 0.02], [midG.lat - 0.02, midG.lat + 0.02], 0.005, [midG.depth]);
   // 規模：Pd 法（Wu & Zhao 2006）。只用已收滿 3 秒 P 波（且已傳到中心）的測站；
   // 還沒有任何一站收滿時，先用目前收到的部分視窗（Pd 只會越來越大 → 規模偏低，標示「估算中」），取中位數
   const withPd = picks.filter(p => p.pd > 0);

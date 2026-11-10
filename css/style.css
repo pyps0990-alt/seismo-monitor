@@ -189,6 +189,7 @@ body.eew-emergency::after { content: ""; position: fixed; inset: 0; z-index: 90;
 .keys i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; margin-right: 3px; }
 .keys .kp { background: rgba(250,204,21,.25); border: 2px solid #facc15; }
 .keys .ks { background: rgba(239,68,68,.3); border: 2px solid #ef4444; }
+.keys .ks.n { background: rgba(249,115,22,.3); border-color: #f97316; }
 .kstar { color: #ef4444; } .khome { color: var(--accent); } .kobs { color: #60a5fa; }
 .tip { position: absolute; z-index: 3; pointer-events: none; width: 220px; padding: 10px 12px; border-radius: 10px; background: rgba(17,20,26,.95); border: 1px solid var(--line2); font-size: .75rem; line-height: 1.6; color: var(--mut); box-shadow: 0 8px 24px rgba(0,0,0,.5); }
 .tip b { color: var(--fg); font-size: .86rem; }

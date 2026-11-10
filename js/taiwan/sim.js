@@ -1,6 +1,6 @@
 // 台灣地震速報模擬：自訂／預設地震 → 測站觸發 → 本機定位 → 發布速報（一般／緊急）→ 鄉鎮震度預測與倒數
 import { STATIONS, TOWNS, loadTowns, townAt, describeEpicenter, distKm } from './geo.js';
-import { createScenario, locate, locateRobust, noticeCandidates, NOTICE, triggerOf, predictAt, loadModel, MODEL, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
+import { createScenario, locate, locateRobust, noticeCandidates, NOTICE, triggerOf, predictAt, predictIntensity, loadModel, MODEL, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
 import { siteOf, siteClass } from './site.js';
 import { INTENSITY_COLORS, intensity, intensityIndex } from '../detector.js';
 import { TaiwanMap, shortInt } from './map.js';
@@ -236,8 +236,9 @@ export class TaiwanEEW {
 
     if (!this.reveal && now - sc.q.t0 > END_MS) { this.reveal = true; $('twStart').disabled = false; document.body.classList.remove('quake-on'); }
     // 範圍通知階段：地圖只畫正方形警示區域（尚未確認，不逐鄉鎮上色）；正式速報後才逐鄉鎮上色
-    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.sol?.prelim ? null : this.townInts, region: this.reveal ? null : this.region, picked, stationInts, rejected: this.rejected,
+    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.sol?.prelim || !this.reveal ? null : this.townInts, region: this.sol?.prelim ? this.region : null, picked,   // 方框只在正式速報前顯示；之後改用震度同心圓 stationInts, rejected: this.rejected,
       realStations: this.reveal && this.real ? this.real.stations : null,
+      bands: this.sol && !this.sol.prelim && !this.reveal ? this.bands : null, level: this.sol?.prelim ? null : this.level,
       home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, reveal: this.reveal, pickPoint: this.reveal ? this.readQuake() : null });
     this.render(now, n);
     this.renderOverlay(now);
@@ -294,6 +295,15 @@ export class TaiwanEEW {
     this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
     this.region = this.computeRegion(sol);
     this.checkHomeAlert(now);
+    // 震度同心圓：每 2 km 算一次預估震度（不含各地地盤差異），整理成 [內徑, 外徑, 震度] 的環
+    this.bands = [];
+    if (!sol.prelim) {
+      let cur = null;
+      for (let r = 0; r <= 600; r += 2) {
+        const n = predictIntensity(sol.M, Math.hypot(r, sol.depth), sol.depth);
+        if (!cur || n !== cur.n) { if (cur) cur.r1 = r; cur = { n, r0: r, r1: 600 }; if (n !== '0') this.bands.push(cur); else break; }
+      }
+    }
   }
 
   // ---- 區域警示（正方形區塊）----

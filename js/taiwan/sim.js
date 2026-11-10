@@ -10,7 +10,7 @@ const PROCESS_MS = 300;
 const MAX_REPORTS = 10;
 const END_MS = 75000;
 const EMERGENCY_M = 5.5;          // 預估規模 > 5.5
-const EMERGENCY_INT = '4';        // 且任一測站實測震度 ≥ 4 級 → 緊急地震速報
+const EMERGENCY_INT = '4';        // 且任一測站實測震度 ≥ 4 級 → 強震即時訊息
 
 const badge = n => `<span class="badge" style="background:${INTENSITY_COLORS[n]}">${n}</span>`;
 const hhmmss = t => new Date(t).toLocaleTimeString('zh-TW', { hour12: false });
@@ -141,6 +141,7 @@ export class TaiwanEEW {
 
     $('twStart').disabled = true;
     document.body.classList.add('quake-on');
+    document.body.classList.remove('eew-emergency'); $('eewOverlay').hidden = true;
     this.map.userMoved = false; // 新地震重新開始自動追蹤
     $('eewCard').className = 'eew-card idle waiting';
     $('eewCard').innerHTML = `<div class="ttl">${this.real ? `回放：${this.real.name}` : '監測中…'}</div><p>等待測站偵測 P 波</p>`;
@@ -239,6 +240,8 @@ export class TaiwanEEW {
       realStations: this.reveal && this.real ? this.real.stations : null,
       home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, reveal: this.reveal, pickPoint: this.reveal ? this.readQuake() : null });
     this.render(now, n);
+    this.renderOverlay(now);
+    if (this.reveal) document.body.classList.remove('eew-emergency');
     if (this.reveal && now - sc.q.t0 > END_MS + 60000) { this.sc = null; this.renderIdle(); }
   }
 
@@ -418,7 +421,10 @@ export class TaiwanEEW {
       if (this.report === 1) this.firstIssued = now;
       this.level = emergency ? 'emergency' : 'normal';
       const d = emergency ? this.sound.eewEmergency() : this.sound.eewNormal();
-      this.say(this.phrase(hp.n, sec), d);
+      // 強震即時訊息語音先講類別與行動；一般地震速報只報震度與秒數
+      this.say(emergency ? `強震即時訊息，${this.phrase(hp.n, sec)}，請立即避難` : `地震速報，${this.phrase(hp.n, sec)}`, d);
+      document.body.classList.toggle('eew-emergency', emergency);
+      if (emergency) this.showOverlay(now);
     } else {
       this.sound.update();
       if (prevInt && prevInt !== hp.n && sec > 2) this.say(this.phrase(hp.n, sec), 0.2);
@@ -447,12 +453,15 @@ export class TaiwanEEW {
     const prelim = !!so.prelim;
     const emergency = this.level === 'emergency';
     const kind = prelim ? 'prelim' : emergency ? 'emergency' : 'normal';
-    const title = prelim ? 'P 波偵測・範圍通知' : emergency ? '緊急地震速報' : '地震速報';
+    const title = prelim ? 'P 波偵測・範圍通知' : emergency ? '強震即時訊息' : '一般地震速報';
     const sub = prelim ? `未確認 · ${so.n} 站` : `第 ${this.report} 報 · ${hhmmss(so.issued)}`;
     const epi = describeEpicenter(so.lon, so.lat);
     const ml = this.maxLand;
     const cdText = left > 0 ? `${sec}<small>秒後抵達</small>` : (lead <= 0 ? '盲區<small>無預警時間</small>' : '已抵達');
-    const advice = left > 0 ? (intensityIndex(hp.n) >= 3 ? '請立即趴下、掩護、穩住' : '可能感到搖晃，請保持冷靜') : '注意安全，留意餘震';
+    // 用語依速報類別區分：強震即時訊息要求立即避難；一般地震速報提醒注意
+    const advice = left > 0
+      ? (emergency ? '立即避難：趴下、掩護、穩住' : intensityIndex(hp.n) >= 3 ? '注意搖晃，遠離窗戶與易倒物品' : '可能感到輕微搖晃')
+      : '注意安全，留意餘震';
     const t0 = this.sc.q.t0;
     $('eewCard').className = 'eew-card ' + kind;
     if (prelim) {
@@ -512,6 +521,33 @@ export class TaiwanEEW {
       <span class="tm ${r.s > 0 ? '' : 'done'}">${r.s > 0 ? Math.ceil(r.s) + ' 秒' : '已抵達'}</span></div>`).join('');
   }
 
+  // ---- 強震即時訊息：全螢幕警報畫面（約 10 秒後自動收起，點一下可提前關閉）----
+  showOverlay(now) {
+    const ov = $('eewOverlay');
+    this.overlayUntil = now + 10000;
+    ov.hidden = false;
+    ov.onclick = () => { this.overlayUntil = 0; ov.hidden = true; };
+    this.renderOverlay(now);
+  }
+  renderOverlay(now) {
+    const ov = $('eewOverlay');
+    if (ov.hidden) return;
+    if (!this.sol || this.reveal || now > this.overlayUntil) { ov.hidden = true; return; }
+    const h = this.home, hp = this.homePred(this.sol);
+    const left = (hp.ts - now) / 1000, sec = Math.ceil(left);
+    const epi = describeEpicenter(this.sol.lon, this.sol.lat).where.replace('位於', '');
+    ov.innerHTML = `<div class="ov-box">
+      <div class="ov-kind">強震即時訊息</div>
+      <div class="ov-sub">${epi}發生強烈地震 · 規模 M${this.sol.M.toFixed(1)}</div>
+      <div class="ov-main">
+        <div class="ov-lv" style="background:${INTENSITY_COLORS[hp.n]}"><b>${shortInt(hp.n)}</b><small>級</small></div>
+        <div class="ov-sec">${left > 0 ? `${sec}<small>秒</small>` : '搖晃中'}</div>
+      </div>
+      <div class="ov-info">${h.name}</div>
+      <div class="ov-act">立即避難：趴下、掩護、穩住</div>
+      <div class="ov-close">點一下關閉</div></div>`;
+  }
+
   // 全站橫幅：任何頁面都顯示「通知類型｜我這裡幾級｜幾秒」，點一下回到速報頁
   renderBanner(kind, title, h, hp, left, sec) {
     const b = $('eewBanner');
@@ -563,7 +599,7 @@ export class TaiwanEEW {
     $('secSetup').open = true; $('secTowns').open = false;
     $('eewCard').className = 'eew-card idle';
     $('eewCard').innerHTML = `<div class="ttl">待命中</div>
-      <p>偵測到 P 波就發布範圍通知；3 站確認後發布正式速報。規模 &gt; ${EMERGENCY_M} 且陸上測站實測 ≥ ${EMERGENCY_INT} 級時為緊急地震速報。</p>`;
+      <p>偵測到 P 波就發布範圍通知；3 站確認後發布正式速報。規模 &gt; ${EMERGENCY_M} 且陸上測站實測 ≥ ${EMERGENCY_INT} 級時為強震即時訊息。</p>`;
   }
 
   onHover(p, e) {

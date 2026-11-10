@@ -79,7 +79,7 @@ export class Sound {
     this.note(1047, 1.5, 0.12, 0.6);
     return 2.0;
   }
-  // 緊急地震速報：雙音「長－短－短」完整節奏（約 2.9 秒），音量較大
+  // 強震即時訊息：雙音「長－短－短」完整節奏（約 2.9 秒），音量較大
   eewEmergency() {
     this.dualTone(0, 1.2, 0.28); this.dualTone(1.45, 0.55, 0.28); this.dualTone(2.25, 0.55, 0.28);
     return 3.0;

@@ -154,17 +154,20 @@ export class TaiwanMap {
       }
     }
 
-    // 區域警示：約 10 km 正方形區塊。範圍通知階段（未確認）為閃爍的黃框；正式速報後依保守震度著色的實框
+    // 區域警示：固定 5 km × 5 km 正方形，持續閃爍（約每 0.8 秒一次）。
+    // 範圍通知階段為黃色；正式速報後依保守估計震度著色
     const rg = st.region;
     if (rg) {
-      const pulse = 0.25 + 0.2 * Math.abs(Math.sin(st.now / 350));
+      const on = (Math.sin(st.now / 130) + 1) / 2;              // 0～1 循環
+      const fillA = rg.prelim ? 0.15 + 0.5 * on : 0.08 + 0.35 * on;
+      const lineA = 0.35 + 0.65 * on;
       for (const c of rg.blocks) {
-        const h = c.size / 2;
-        const [ax, ay] = P(c.lon - h, c.lat + h), [bx, by] = P(c.lon + h, c.lat - h);
+        const [ax, ay] = P(c.lon - c.hx, c.lat + c.hy), [bx, by] = P(c.lon + c.hx, c.lat - c.hy);
+        const w = bx - ax, hgt = by - ay, g = Math.min(1, w * 0.06);   // 格間留一點縫，看得出一格一格
         const col = rg.prelim ? '#facc15' : INTENSITY_COLORS[c.n];
-        // 正式速報時底下已有鄉鎮震度色，區塊只畫外框避免太雜
-        if (rg.prelim) { ctx.globalAlpha = pulse; ctx.fillStyle = col; ctx.fillRect(ax + 1, ay + 1, bx - ax - 2, by - ay - 2); }
-        ctx.globalAlpha = 1; ctx.strokeStyle = col; ctx.lineWidth = rg.prelim ? 1.5 : 1.2; ctx.strokeRect(ax + 1, ay + 1, bx - ax - 2, by - ay - 2);
+        ctx.fillStyle = col;
+        ctx.globalAlpha = fillA; ctx.fillRect(ax + g, ay + g, w - 2 * g, hgt - 2 * g);
+        ctx.globalAlpha = lineA; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.strokeRect(ax + g, ay + g, w - 2 * g, hgt - 2 * g);
       }
       ctx.globalAlpha = 1;
     }

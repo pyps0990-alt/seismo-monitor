@@ -266,12 +266,16 @@ export class TaiwanEEW {
   //   震央可能偏差 u 公里 → 格子到震央的距離先減去 u（假設震央其實更靠近它）
   //   規模可能偏差 σ     → 用 M + σ 計算
   // 保守估計達警示門檻（≥ 4 級）的格子就是警示區；都沒有時改用 3 級門檻。
-  // 多尺度正方形網格：最小格 0.05°（約 5 km），相鄰四格都在警示區就合併成大一級，最大 0.2°（約 20 km）
-  static BASE = 0.05; static LEVELS = 2; static O = [119.25, 21.85];
+  // 固定大小的正方形網格：邊長 5.00 km（以公里換算經緯度，四邊等長，不是經緯度格）
+  //   經度每格 = 5 ÷ (111.32 × cos 23.7°) = 0.04905°，緯度每格 = 5 ÷ 110.57 = 0.04522°
+  static SIDE_KM = 5;
+  static DLON = 5 / (111.32 * Math.cos(23.7 * Math.PI / 180));
+  static DLAT = 5 / 110.57;
+  static O = [119.25, 21.85];
   buildCells() {
-    const B = TaiwanEEW.BASE, [ox, oy] = TaiwanEEW.O, cells = new Map();
-    for (let j = 0; oy + j * B < 25.45; j++) for (let i = 0; ox + i * B < 122.1; i++) {
-      const cLon = ox + (i + 0.5) * B, cLat = oy + (j + 0.5) * B;
+    const DX = TaiwanEEW.DLON, DY = TaiwanEEW.DLAT, [ox, oy] = TaiwanEEW.O, cells = new Map();
+    for (let j = 0; oy + j * DY < 25.45; j++) for (let i = 0; ox + i * DX < 122.1; i++) {
+      const cLon = ox + (i + 0.5) * DX, cLat = oy + (j + 0.5) * DY;
       // 中心在陸地 → 該鄉鎮；中心在海上但靠岸（4 km 內有鄉鎮中心）→ 歸給最近的鄉鎮，避免沿海鄉鎮漏格
       let town = townAt(cLon, cLat);
       if (!town) {
@@ -281,43 +285,16 @@ export class TaiwanEEW {
       }
       if (town) cells.set(`${i},${j}`, { i, j, lon: cLon, lat: cLat, town });
     }
-    // 各尺度「含有陸地」的區塊（合併時，純海上的子格視為可略過）
-    this.landBlocks = [new Set(cells.keys())];
-    for (let L = 1; L <= TaiwanEEW.LEVELS; L++) this.landBlocks[L] = new Set([...this.landBlocks[L - 1]].map(k => { const [i, j] = k.split(',').map(Number); return `${i >> 1},${j >> 1}`; }));
     return cells;
   }
   cellKey(lon, lat) {
-    const B = TaiwanEEW.BASE, [ox, oy] = TaiwanEEW.O;
-    return `${Math.floor((lon - ox) / B)},${Math.floor((lat - oy) / B)}`;
+    const [ox, oy] = TaiwanEEW.O;
+    return `${Math.floor((lon - ox) / TaiwanEEW.DLON)},${Math.floor((lat - oy) / TaiwanEEW.DLAT)}`;
   }
-  // 由最小格的警示結果，合併出最少數量的正方形
-  mergeBlocks(hit) {
-    const full = [hit];  // full[L]: Map "I,J" → 最大震度
-    for (let L = 1; L <= TaiwanEEW.LEVELS; L++) {
-      full[L] = new Map();
-      const parents = new Set([...full[L - 1].keys()].map(k => { const [i, j] = k.split(',').map(Number); return `${i >> 1},${j >> 1}`; }));
-      for (const pk of parents) {
-        const [I, J] = pk.split(',').map(Number);
-        let ok = true, nFull = 0, mx = '0';
-        for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-          const ck = `${2 * I + a},${2 * J + b}`;
-          if (full[L - 1].has(ck)) { nFull++; const v = full[L - 1].get(ck); if (intensityIndex(v) > intensityIndex(mx)) mx = v; }
-          else if (this.landBlocks[L - 1].has(ck)) { ok = false; break; }
-        }
-        if (ok && nFull >= 2) full[L].set(pk, mx);
-      }
-    }
-    const out = [];
-    for (let L = TaiwanEEW.LEVELS; L >= 0; L--) {
-      const size = TaiwanEEW.BASE * 2 ** L;
-      for (const [k, n] of full[L]) {
-        const [I, J] = k.split(',').map(Number);
-        let covered = false;  // 已被更大的方塊包含就不重複畫
-        for (let U = L + 1, a = I >> 1, b = J >> 1; U <= TaiwanEEW.LEVELS; U++, a >>= 1, b >>= 1) if (full[U].has(`${a},${b}`)) { covered = true; break; }
-        if (!covered) out.push({ lon: TaiwanEEW.O[0] + (I + 0.5) * size, lat: TaiwanEEW.O[1] + (J + 0.5) * size, size, n });
-      }
-    }
-    return out;
+  // 警示格 → 繪圖用方塊（大小固定）
+  toBlocks(hit) {
+    const hx = TaiwanEEW.DLON / 2, hy = TaiwanEEW.DLAT / 2;
+    return [...hit].map(([k, n]) => { const c = this.cells.get(k); return { lon: c.lon, lat: c.lat, hx, hy, n }; });
   }
 
   computeRegion(sol) {
@@ -337,9 +314,9 @@ export class TaiwanEEW {
     let thr = '4', hit = pick(thr);
     if (!hit.size) { thr = '3'; hit = pick(thr); }
     if (!hit.size) return null;
-    const B = TaiwanEEW.BASE, cellKm2 = (B * 111.32 * Math.cos(23.7 * Math.PI / 180)) * (B * 110.57);
+    const cellKm2 = TaiwanEEW.SIDE_KM ** 2;
     const homeInside = !!he && (intensityIndex(homeLv) >= intensityIndex(thr) || hit.has(this.cellKey(he.lon, he.lat)));
-    const blocks = this.mergeBlocks(hit);
+    const blocks = this.toBlocks(hit);
     return { blocks, nBase: hit.size, thr, u, sigM, prelim: !!sol.prelim, areaKm2: hit.size * cellKm2, homeInside };
   }
 

@@ -38,10 +38,23 @@ export class TaiwanEEW {
       : '預估式：手設教學模型';
     for (const t of TOWNS) Object.assign(t, siteOf(t.c[0], t.c[1]));
     $('twN').textContent = STATIONS.length;
-    $('twPreset').innerHTML = '<option value="">— 預設情境 —</option>' + PRESETS.map((p, i) => `<option value="${i}">${p.name}（M${p.M}）</option>`).join('');
-    $('twPreset').onchange = () => { const p = PRESETS[$('twPreset').value]; if (p) this.fill(p); };
-    $('twRandom').onclick = () => this.fill(randomQuake());
-    ['twLon', 'twLat', 'twDepth', 'twM'].forEach(id => $(id).oninput = () => { $('twPreset').value = ''; this.syncLabels(); });
+    // 真實地震回放：震源用官方目錄值，結束後用當時各測站實測震度對答案
+    try { this.realEvents = await (await fetch('data/real-events.json')).json(); } catch { this.realEvents = []; }
+    for (const ev of this.realEvents) for (const st of ev.stations) {
+      const t = townAt(st.lon, st.lat);
+      st.site = { ...siteOf(st.lon, st.lat), id: t?.id }; st.obs = intensity(st.pga, st.pgv);
+    }
+    $('twPreset').innerHTML = '<option value="">— 選擇情境 —</option>'
+      + `<optgroup label="真實地震回放（含實測對答案）">${this.realEvents.map((e, i) => `<option value="r${i}">${e.name}　M${e.M}・${e.stations.length} 站實測</option>`).join('')}</optgroup>`
+      + `<optgroup label="模擬情境">${PRESETS.map((p, i) => `<option value="${i}">${p.name}（M${p.M}）</option>`).join('')}</optgroup>`;
+    $('twPreset').onchange = () => {
+      const v = $('twPreset').value;
+      this.selectedReal = v.startsWith('r') ? this.realEvents[+v.slice(1)] : null;
+      const p = this.selectedReal || PRESETS[v];
+      if (p) this.fill(p, true);
+    };
+    $('twRandom').onclick = () => { this.selectedReal = null; $('twPreset').value = ''; this.fill(randomQuake()); };
+    ['twLon', 'twLat', 'twDepth', 'twM'].forEach(id => $(id).oninput = () => { $('twPreset').value = ''; this.selectedReal = null; this.syncLabels(); });
     $('twStart').onclick = () => this.start();
 
     const counties = [...new Set(TOWNS.map(t => t.county))];
@@ -69,7 +82,7 @@ export class TaiwanEEW {
     $('twDepth').value = Math.round(q.depth); $('twM').value = q.M.toFixed(1);
     this.syncLabels();
   }
-  setEpicenter(p) { $('twPreset').value = ''; $('twLon').value = p.lon.toFixed(2); $('twLat').value = p.lat.toFixed(2); this.syncLabels(); }
+  setEpicenter(p) { $('twPreset').value = ''; this.selectedReal = null; $('twLon').value = p.lon.toFixed(2); $('twLat').value = p.lat.toFixed(2); this.syncLabels(); }
   syncLabels() {
     $('twDepthV').textContent = `${$('twDepth').value} km`;
     $('twMV').textContent = `M ${(+$('twM').value).toFixed(1)}`;
@@ -94,10 +107,23 @@ export class TaiwanEEW {
     if (!this.homeTown) return;
     // 第一次按「發生地震」時請求系統通知權限（瀏覽器規定必須由使用者操作觸發）
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
-    const q = this.readQuake();
+    // 真實地震回放：直接用官方目錄的精確震源值
+    this.real = this.selectedReal || null;
+    const q = this.real ? { lon: this.real.lon, lat: this.real.lat, depth: this.real.depth, M: this.real.M } : this.readQuake();
     const t0 = Date.now() + 1500;
     this.sc = createScenario(q, t0);
-    Object.assign(this, { sol: null, report: 0, lastN: 0, lastUsed: 0, lastReportN: 0, rejected: null, lastSpeech: 0, lastCalc: 0, firstIssued: null, firstNotice: null, prelim: null, cancelled: 0, maxLand: null, region: null, homeAlerted: null, homeInRegion: false, localPick: null, reveal: false,
+    // 真實地震回放：虛擬測站 6 km 內若有當時的真實測站，就改用真實量到的 PGA／PGV
+    // → 測站實測震度（與 PLUM 即時修正）反映真實情況，例如 0403 臺北盆地實測 5 弱
+    if (this.real) {
+      let replaced = 0;
+      for (const s of this.sc.stations) {
+        let best = null;
+        for (const st of this.real.stations) { const d = distKm(s.lon, s.lat, st.lon, st.lat); if (d < 6 && (!best || d < best.d)) best = { st, d }; }
+        if (best) { s.pga = best.st.pga; s.pgv = best.st.pgv; s.pAmp = best.st.pga * 0.3 * 10 ** (0.1 * (Math.random() - 0.5)); s.realObs = true; replaced++; }
+      }
+      this.realReplaced = replaced;
+    }
+    Object.assign(this, { sol: null, report: 0, lastN: 0, lastUsed: 0, lastReportN: 0, rejected: null, realEval: null, lastSpeech: 0, lastCalc: 0, firstIssued: null, firstNotice: null, prelim: null, cancelled: 0, maxLand: null, region: null, homeAlerted: null, homeInRegion: false, localPick: null, reveal: false,
       townInts: null, lastTick: null, arrived: false, level: null });
 
     // 本站（我的位置）收到的地震波 → 送進模擬器
@@ -105,13 +131,19 @@ export class TaiwanEEW {
     const R = Math.hypot(distKm(h.lon, h.lat, q.lon, q.lat), q.depth);
     const tp = t0 + (R / VP) * 1000, ts = t0 + (R / VS) * 1000;
     this.homeTruth = predictAt(q.M, R, h.site, q.depth);
+    // 回放真實地震時，若你家 10 km 內有實測測站，就用「當時實際量到的」當作你家的真實搖晃
+    if (this.real) {
+      let best = null;
+      for (const st of this.real.stations) { const d = distKm(h.lon, h.lat, st.lon, st.lat); if (d < 10 && (!best || d < best.d)) best = { st, d }; }
+      if (best) this.homeTruth = { pga: best.st.pga, pgv: best.st.pgv, n: best.st.obs, real: true, dist: best.d };
+    }
     this.onQuake({ t0: tp, sp: ts - tp, peak: this.homeTruth.pga / 100 / 1.15, freq: dominantFreq(q.M), dur: 6000 + (q.M - 4) * 5000 });
 
     $('twStart').disabled = true;
     document.body.classList.add('quake-on');
     this.map.userMoved = false; // 新地震重新開始自動追蹤
     $('eewCard').className = 'eew-card idle waiting';
-    $('eewCard').innerHTML = `<div class="ttl">監測中…</div><p>等待測站偵測 P 波</p>`;
+    $('eewCard').innerHTML = `<div class="ttl">${this.real ? `回放：${this.real.name}` : '監測中…'}</div><p>等待測站偵測 P 波</p>`;
     // 地震開始：收起設定、展開各地預估；手機上捲回地圖
     $('secSetup').open = false; $('secHome').open = false; $('secTowns').open = true;
     $('mapStatus').hidden = false;
@@ -203,7 +235,8 @@ export class TaiwanEEW {
 
     if (!this.reveal && now - sc.q.t0 > END_MS) { this.reveal = true; $('twStart').disabled = false; document.body.classList.remove('quake-on'); }
     // 範圍通知階段：地圖只畫正方形警示區域（尚未確認，不逐鄉鎮上色）；正式速報後才逐鄉鎮上色
-    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.sol?.prelim ? null : this.townInts, region: this.region, picked, stationInts, rejected: this.rejected,
+    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.sol?.prelim ? null : this.townInts, region: this.reveal ? null : this.region, picked, stationInts, rejected: this.rejected,
+      realStations: this.reveal && this.real ? this.real.stations : null,
       home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, reveal: this.reveal, pickPoint: this.reveal ? this.readQuake() : null });
     this.render(now, n);
     if (this.reveal && now - sc.q.t0 > END_MS + 60000) { this.sc = null; this.renderIdle(); }
@@ -266,11 +299,11 @@ export class TaiwanEEW {
   //   震央可能偏差 u 公里 → 格子到震央的距離先減去 u（假設震央其實更靠近它）
   //   規模可能偏差 σ     → 用 M + σ 計算
   // 保守估計達警示門檻（≥ 4 級）的格子就是警示區；都沒有時改用 3 級門檻。
-  // 固定大小的正方形網格：邊長 5.00 km（以公里換算經緯度，四邊等長，不是經緯度格）
-  //   經度每格 = 5 ÷ (111.32 × cos 23.7°) = 0.04905°，緯度每格 = 5 ÷ 110.57 = 0.04522°
-  static SIDE_KM = 5;
-  static DLON = 5 / (111.32 * Math.cos(23.7 * Math.PI / 180));
-  static DLAT = 5 / 110.57;
+  // 固定大小的正方形網格：邊長 10.00 km（以公里換算經緯度，四邊等長，不是經緯度格）
+  //   經度每格 = 10 ÷ (111.32 × cos 23.7°) = 0.09810°，緯度每格 = 10 ÷ 110.57 = 0.09044°
+  static SIDE_KM = 10;
+  static DLON = TaiwanEEW.SIDE_KM / (111.32 * Math.cos(23.7 * Math.PI / 180));
+  static DLAT = TaiwanEEW.SIDE_KM / 110.57;
   static O = [119.25, 21.85];
   buildCells() {
     const DX = TaiwanEEW.DLON, DY = TaiwanEEW.DLAT, [ox, oy] = TaiwanEEW.O, cells = new Map();
@@ -357,7 +390,8 @@ export class TaiwanEEW {
 
   homePred(so) {
     const h = this.home, R = hypo(h.lon, h.lat, so);
-    return { ...predictAt(so.M, R, h.site, so.depth), ts: so.t0 + (R / VS) * 1000 };
+    const p = predictAt(so.M, R, h.site, so.depth);
+    return { ...p, n: this.plumMax(p.n, h.site), ts: so.t0 + (R / VS) * 1000 };   // 你所在地也套用 PLUM
   }
 
   // 語音格式：「N 級地震，N 秒後抵達」
@@ -487,9 +521,30 @@ export class TaiwanEEW {
   truthHtml() {
     const q = this.sc.q, so = this.sol;
     const err = distKm(q.lon, q.lat, so.lon, so.lat);
-    return `<div class="eew-truth"><b>模擬結束 · 與真實震源比較</b>
+    let realHtml = '';
+    if (this.real) {
+      // 用最後一報的震源解（含 PLUM 無法事後重現，這裡只評震源模型），預估每個實測測站的震度並與當時實測比較
+      this.realEval ??= (() => {
+        let ex = 0, w1 = 0, under = 0;
+        for (const st of this.real.stations) {
+          const R = Math.hypot(distKm(st.lon, st.lat, so.lon, so.lat), so.depth);
+          const d = intensityIndex(predictAt(so.M, R, st.site, so.depth).n) - intensityIndex(st.obs);
+          if (d === 0) ex++; if (Math.abs(d) <= 1) w1++; if (d <= -2) under++;
+        }
+        const n = this.real.stations.length;
+        const mx = this.real.stations.reduce((a, b) => (intensityIndex(b.obs) > intensityIndex(a.obs) ? b : a));
+        return { n, ex: ex / n * 100, w1: w1 / n * 100, under: under / n * 100, mx };
+      })();
+      const e = this.realEval;
+      realHtml = `<div>與 ${e.n} 個測站當時實測比較：完全命中 <b>${e.ex.toFixed(0)}%</b>、差 1 級內 <b>${e.w1.toFixed(0)}%</b>、低估 2 級以上 ${e.under.toFixed(0)}%</div>
+        <div>當時實測最大 ${badge(e.mx.obs)}（PGA ${e.mx.pga.toFixed(0)} gal）· 地圖上的圓點為實測測站（顏色＝實測震度）</div>
+        <div class="muted">註：預估式曾用此地震資料訓練，屬樣本內比較</div>`;
+    }
+    const ht = this.homeTruth;
+    return `<div class="eew-truth"><b>${this.real ? `回放結束 · ${this.real.name}（${this.real.date}）` : '模擬結束 · 與真實震源比較'}</b>
       <div>震央誤差 ${err.toFixed(1)} km · 深度 ${so.depth.toFixed(0)}／${q.depth.toFixed(0)} km · 規模 M${so.M.toFixed(1)}／M${q.M.toFixed(1)}</div>
-      <div>${this.home.name} 實際震度 ${badge(this.homeTruth.n)}（PGA ${this.homeTruth.pga.toFixed(0)} gal、PGV ${this.homeTruth.pgv.toFixed(1)} cm/s）</div></div>`;
+      ${realHtml}
+      <div>${this.home.name} ${ht.real ? `實測（${ht.dist.toFixed(1)} km 內測站）` : '實際'}震度 ${badge(ht.n)}（PGA ${ht.pga.toFixed(0)} gal、PGV ${ht.pgv.toFixed(1)} cm/s）</div></div>`;
   }
 
   renderIdle() {

@@ -172,6 +172,17 @@ export class TaiwanMap {
       ctx.globalAlpha = 1;
     }
 
+    // 真實地震回放結束後：畫出當時的實測測站（顏色＝實測震度）
+    if (st.realStations) {
+      for (const s of st.realStations) {
+        const [x, y] = P(s.lon, s.lat);
+        if (x < -5 || y < -5 || x > w + 5 || y > h + 5) continue;
+        ctx.beginPath(); ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+        ctx.fillStyle = INTENSITY_COLORS[s.obs] ?? '#e5e7eb'; ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 0.8; ctx.stroke();
+      }
+    }
+
     // 待發生的自訂震央（十字準星）
     if (st.pickPoint) {
       const [x, y] = P(st.pickPoint.lon, st.pickPoint.lat);

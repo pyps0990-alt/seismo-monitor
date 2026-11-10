@@ -19,7 +19,8 @@ export async function loadModel(url = 'data/model.json') {
   try { MODEL = await (await fetch(url)).json(); } catch { MODEL = null; }
   return MODEL;
 }
-const evalModel = (m, M, R, depth) => 10 ** (m.c[0] + m.c[1] * M + m.c[2] * Math.log10(R + m.h) + m.c[3] * R + m.c[4] * depth);
+// c[5]（選用）：規模×距離交互項 (M−6)·log10(R+h)，讓大地震在遠處衰減較慢
+const evalModel = (m, M, R, depth) => { const L = Math.log10(R + m.h); return 10 ** (m.c[0] + m.c[1] * M + m.c[2] * L + m.c[3] * R + m.c[4] * depth + (m.c[5] ?? 0) * (M - 6) * L); };
 export function predictPGA(M, R, depth = 10) {
   if (MODEL) return evalModel(MODEL.pga, M, R, depth);
   return 10 ** (1.39 + 0.5 * M - 1.5 * Math.log10(R + 10) - 0.002 * R);
@@ -28,7 +29,8 @@ export function predictPGV(M, R, depth = 10) {
   if (MODEL) return evalModel(MODEL.pgv, M, R, depth);
   return predictPGA(M, R) * 10 ** (0.2 * M - 2.1);
 }
-const magSlope = () => (MODEL ? MODEL.pga.c[1] : 0.5); // log10(PGA) 對規模的斜率（反推規模用）
+// log10(PGA) 對規模的斜率（反推規模用）；有交互項時斜率隨距離改變
+const magSlope = R => (MODEL ? MODEL.pga.c[1] + (MODEL.pga.c[5] ?? 0) * Math.log10(R + MODEL.pga.h) : 0.5);
 // 對應的 S 波主頻（給模擬器產生波形用）：PGV = PGA / (2πf)，以 30 km 處估算
 export function dominantFreq(M) { return predictPGA(M, 30) / (2 * Math.PI * predictPGV(M, 30)); }
 export const predictIntensity = (M, R, depth) => intensity(predictPGA(M, R, depth), predictPGV(M, R, depth));
@@ -142,11 +144,14 @@ function searchGrid(picks, idle, now, lonR, latR, step, depths) {
   for (let lon = lonR[0]; lon <= lonR[1]; lon += step) {
     for (let lat = latR[0]; lat <= latR[1]; lat += step) {
       for (const depth of depths) {
-        const tt = picks.map(p => (Math.hypot(distKm(lon, lat, p.lon, p.lat), depth) / VP) * 1000);
-        // 發震時間的最佳估計 = 平均（到時 − 走時）
-        let t0 = 0; for (let i = 0; i < n; i++) t0 += picks[i].tp - tt[i]; t0 /= n;
-        let ss = 0; for (let i = 0; i < n; i++) { const r = picks[i].tp - tt[i] - t0; ss += r * r; }
-        let cost = Math.sqrt(ss / n);
+        // 穩健估計：發震時間取「到時 − 走時」的中位數、殘差取絕對值平均（L1）
+        // → 少數誤觸發不會把整個解拉偏（平方誤差會被離群值主導）
+        const d0 = new Array(n);
+        for (let i = 0; i < n; i++) d0[i] = picks[i].tp - (Math.hypot(distKm(lon, lat, picks[i].lon, picks[i].lat), depth) / VP) * 1000;
+        const sorted = n > 2 ? [...d0].sort((a, b) => a - b) : d0;
+        const t0 = n > 2 ? (n % 2 ? sorted[n >> 1] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2) : (d0[0] + (d0[1] ?? d0[0])) / 2;
+        let sa = 0; for (let i = 0; i < n; i++) sa += Math.abs(d0[i] - t0);
+        let cost = sa / n;
         for (const s of idle) {
           const late = now - (t0 + (Math.hypot(distKm(lon, lat, s.lon, s.lat), depth) / VP) * 1000);
           if (late > 0) cost += late;
@@ -191,11 +196,11 @@ export function locateRobust(allPicks, idle, now) {
       if (s2.cost < sol.cost * 0.5 && sol.cost > 300) { used = sub; sol = s2; i = -1; }
     }
   }
-  for (let iter = 0; iter < 2; iter++) { // 剔除殘差 > 0.7 秒的觸發後重新定位
+  for (let iter = 0; iter < 5; iter++) { // 每次只剔除殘差最大、且 > 0.7 秒的那一個觸發，再重新定位
     const res = used.map(p => Math.abs(p.tp - sol.t0 - (Math.hypot(distKm(sol.lon, sol.lat, p.lon, p.lat), sol.depth) / VP) * 1000));
-    const kept = used.filter((_, i) => res[i] <= 700);
-    if (kept.length < MIN_ISSUE || kept.length === used.length) break;
-    used = kept; sol = locate(used.slice(0, 25), nearIdle(idle, used[0]), now);
+    let wi = 0; res.forEach((r, i) => { if (r > res[wi]) wi = i; });
+    if (res[wi] <= 700 || used.length - 1 < MIN_ISSUE) break;
+    used = used.filter((_, i) => i !== wi); sol = locate(used.slice(0, 25), nearIdle(idle, used[0]), now);
   }
   return { ...sol, n: used.length, used, rejected: allPicks.filter(p => !used.includes(p)) };
 }
@@ -217,7 +222,7 @@ export function locate(picks, idle = [], now = picks[picks.length - 1]?.tp) {
   const Ms = picks.map(p => {
     const R = Math.hypot(distKm(fine.lon, fine.lat, p.lon, p.lat), fine.depth);
     // 預估式對規模是線性的：log10(PGA) = log10(PGA@M=0) + 斜率·M → 反解 M
-    return (Math.log10(p.pAmp / P_RATIO / (p.site?.ampA ?? 1)) - Math.log10(predictPGA(0, R, fine.depth))) / magSlope();
+    return (Math.log10(p.pAmp / P_RATIO / (p.site?.ampA ?? 1)) - Math.log10(predictPGA(0, R, fine.depth))) / magSlope(R);
   }).sort((a, b) => a - b);
   const mid = Ms.length >> 1;
   const M = Ms.length % 2 ? Ms[mid] : (Ms[mid - 1] + Ms[mid]) / 2;

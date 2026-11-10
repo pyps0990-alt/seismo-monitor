@@ -52,7 +52,9 @@ function lstsq(X, y, w) {
 
 // 最後一項是「資料來源修正」：氣象署用計算震度專用的濾波值（IntScaleValue），USGS 用峰值，兩者有系統差。
 // 預測時一律加上這一項 → 輸出等同於氣象署震度標準
-const feats = (r, h) => [1, r.M, Math.log10(r.rhypo + h), r.rhypo, r.depth, r.src === 'CWA' ? 1 : 0];
+// 第 7 項「規模 × log 距離」：大地震的長週期波衰減較慢，遠處（如臺北盆地）搖晃比等比例縮放更大
+// （2024 花蓮 M7.4 時，距震央約 120 km 的臺北多站實測 5 弱，沒有這項會低估一級）
+const feats = (r, h) => [1, r.M, Math.log10(r.rhypo + h), r.rhypo, r.depth, r.src === 'CWA' ? 1 : 0, (r.M - 6) * Math.log10(r.rhypo + h)];
 function fit(train, key, ampKey) {
   let best = null;
   for (const h of [0, 1, 3, 5, 8, 10, 15, 20, 30]) {   // h（近震源飽和項）用格點搜尋
@@ -64,7 +66,8 @@ function fit(train, key, ampKey) {
   }
   return best;
 }
-const pred = (m, r, amp) => 10 ** (m.c[0] + m.c[1] * r.M + m.c[2] * Math.log10(r.rhypo + m.h) + m.c[3] * r.rhypo + m.c[4] * r.depth + (r.src === 'CWA' ? m.c[5] : 0)) * amp;
+const pred = (m, r, amp) => 10 ** (m.c[0] + m.c[1] * r.M + m.c[2] * Math.log10(r.rhypo + m.h) + m.c[3] * r.rhypo + m.c[4] * r.depth
+  + (r.src === 'CWA' ? m.c[5] : 0) + m.c[6] * (r.M - 6) * Math.log10(r.rhypo + m.h)) * amp;
 
 // ---- 鄉鎮場址修正：該鄉鎮測站平均殘差，並向 0 收縮（測站少就不太相信）----
 const K_SHRINK = 3;
@@ -81,9 +84,27 @@ function siteTerms(train, mPGA, mPGV) {
   for (const [id, a] of Object.entries(acc)) out[id] = { a: +(a.ea / (a.n + K_SHRINK)).toFixed(3), v: +(a.ev / (a.n + K_SHRINK)).toFixed(3), n: a.n };
   return out;
 }
+// 大地震專用鄉鎮修正：只用 M ≥ 6.5 的紀錄，計算「扣掉一般修正後」還剩下的殘差。
+// 用來捕捉長週期地震波在盆地（如臺北盆地）額外放大的現象；只在預估 M ≥ 6.5 時使用。
+const LARGE_M = 6.5, K_LARGE = 2;
+function largeSiteTerms(train, mPGA, mPGV, site) {
+  const acc = {};
+  for (const r of train) {
+    if (r.M < LARGE_M || !r.town) continue;
+    const d = site[r.town] ?? { a: 0, v: 0 };
+    const a = (acc[r.town] ??= { ea: 0, ev: 0, n: 0 });
+    a.ea += Math.log10(r.pga) - Math.log10(pred(mPGA, r, r.ampA)) - d.a;
+    a.ev += Math.log10(r.pgv) - Math.log10(pred(mPGV, r, r.ampV)) - d.v;
+    a.n++;
+  }
+  const out = {};
+  for (const [id, a] of Object.entries(acc)) out[id] = { a: +(a.ea / (a.n + K_LARGE)).toFixed(3), v: +(a.ev / (a.n + K_LARGE)).toFixed(3), n: a.n };
+  return out;
+}
 function trainAll(train) {
   const mPGA = fit(train, 'pga', 'ampA'), mPGV = fit(train, 'pgv', 'ampV');
-  return { mPGA, mPGV, site: siteTerms(train, mPGA, mPGV) };
+  const site = siteTerms(train, mPGA, mPGV);
+  return { mPGA, mPGV, site, large: largeSiteTerms(train, mPGA, mPGV, site) };
 }
 
 // ---- 原本的手設模型（比較用）----
@@ -119,8 +140,26 @@ const res = {
   gmpe: evaluate(records, r => cvPred.gmpe.get(r)[0], r => cvPred.gmpe.get(r)[1]),
   gmpeSite: evaluate(records, r => cvPred.site.get(r)[0], r => cvPred.site.get(r)[1]),
 };
+// ---- 大地震留一法測試：預測某個大地震時，大地震修正只能用「其他」大地震學 ----
+const largeEvs = [...new Set(records.filter(r => r.M >= LARGE_M).map(r => r.ev))];
+const largeReport = [];
+for (const evId of largeEvs) {
+  const tr = records.filter(r => r.ev !== evId), te = records.filter(r => r.ev === evId);
+  const m = trainAll(tr);
+  let hit0 = 0, hit1 = 0, under0 = 0, under1 = 0;
+  for (const r of te) {
+    const d = m.site[r.town] ?? { a: 0, v: 0 }, L = m.large[r.town] ?? { a: 0, v: 0 };
+    const obs = D.intensityIndex(D.intensity(r.pga, r.pgv));
+    const p0 = D.intensityIndex(D.intensity(pred(m.mPGA, r, r.ampA) * 10 ** d.a, pred(m.mPGV, r, r.ampV) * 10 ** d.v));
+    const p1 = D.intensityIndex(D.intensity(pred(m.mPGA, r, r.ampA) * 10 ** (d.a + L.a), pred(m.mPGV, r, r.ampV) * 10 ** (d.v + L.v)));
+    if (p0 === obs) hit0++; if (p1 === obs) hit1++; if (p0 < obs) under0++; if (p1 < obs) under1++;
+  }
+  const n = te.length;
+  largeReport.push(`  ${evId} M${te[0].M}（${n} 站）：命中 ${(hit0 / n * 100).toFixed(0)}% → ${(hit1 / n * 100).toFixed(0)}%，低估 ${(under0 / n * 100).toFixed(0)}% → ${(under1 / n * 100).toFixed(0)}%`);
+}
+
 // 正式模型：用全部資料訓練
-const { mPGA, mPGV, site: siteDelta } = trainAll(records);
+const { mPGA, mPGV, site: siteDelta, large: siteDeltaLarge } = trainAll(records);
 const train = records, testEv = { size: 0 };
 
 const round = c => c.map(v => +v.toFixed(5));
@@ -130,9 +169,10 @@ const model = {
   data: { events: evIds.length, records: records.length, validation: `依地震 ${FOLDS} 折交叉驗證` },
   form: 'log10(Y) = c0 + c1*M + c2*log10(R+h) + c3*R + c4*depth + log10(地形放大) + 鄉鎮修正',
   // 網頁端只用前 5 個係數；c0 已併入氣象署來源修正（c5），輸出即氣象署震度標準
-  pga: { c: round([mPGA.c[0] + mPGA.c[5], ...mPGA.c.slice(1, 5)]), h: mPGA.h, cwaOffset: +mPGA.c[5].toFixed(4) },
-  pgv: { c: round([mPGV.c[0] + mPGV.c[5], ...mPGV.c.slice(1, 5)]), h: mPGV.h, cwaOffset: +mPGV.c[5].toFixed(4) },
-  siteDelta, test: res,
+  // c[5]＝規模×log距離 交互項（對 (M−6)·log10(R+h)）
+  pga: { c: round([mPGA.c[0] + mPGA.c[5], ...mPGA.c.slice(1, 5), mPGA.c[6]]), h: mPGA.h, cwaOffset: +mPGA.c[5].toFixed(4) },
+  pgv: { c: round([mPGV.c[0] + mPGV.c[5], ...mPGV.c.slice(1, 5), mPGV.c[6]]), h: mPGV.h, cwaOffset: +mPGV.c[5].toFixed(4) },
+  siteDelta, siteDeltaLarge, largeM: LARGE_M, test: res,
 };
 fs.writeFileSync('data/model.json', JSON.stringify(model));
 
@@ -151,6 +191,9 @@ const report = [
   '',
   `PGA 誤差降低 ${pct(res.old.pgaRmsLog10, res.gmpeSite.pgaRmsLog10)}，PGV 誤差降低 ${pct(res.old.pgvRmsLog10, res.gmpeSite.pgvRmsLog10)}`,
   '（log10 誤差 0.3 ≈ 預估值常在實際的 1/2～2 倍之間）',
+  '',
+  `大地震專用鄉鎮修正（M ≥ ${LARGE_M}，${Object.keys(siteDeltaLarge).length} 個鄉鎮）留一法測試（加修正前 → 加修正後）：`,
+  ...largeReport,
 ].join('\n');
 fs.writeFileSync('data/model-report.txt', report);
 console.log(report);

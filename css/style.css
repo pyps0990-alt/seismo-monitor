@@ -186,6 +186,16 @@ body.eew-emergency::after { content: ""; position: fixed; inset: 0; z-index: 90;
 .sec-body { padding: 0 16px 14px; }
 .foot-note { margin: 2px 4px 0; color: var(--mut); font-size: .7rem; }
 
+/* 地震序列：時間軸 */
+.seq-list { display: grid; gap: 2px; margin-top: 12px; max-height: 320px; overflow-y: auto; }
+.seq-sum { font-size: .75rem; color: var(--fg2); padding: 6px 4px; border-bottom: 1px solid var(--line); margin-bottom: 4px; line-height: 1.6; }
+.seq-row { display: grid; grid-template-columns: 18px 42px 44px minmax(0, 1fr); gap: 6px; align-items: center; padding: 5px 4px; border-radius: 6px; font-size: .78rem; }
+.seq-row.now { background: rgba(239,68,68,.12); }
+.seq-row.done { color: var(--fg2); }
+.seq-row.wait { color: var(--mut); }
+.seq-row .k1 { font-weight: 700; } .seq-row .k1.main { color: #f87171; }
+.seq-row .mm { font-family: var(--mono); }
+.seq-row .rs { font-size: .7rem; color: var(--mut); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 各地預估：清單 */
 .town-list { display: grid; gap: 2px; max-height: 360px; overflow-y: auto; }
 .town { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 6px 4px; border-radius: 8px; font-size: .85rem; }

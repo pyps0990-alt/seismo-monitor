@@ -66,7 +66,7 @@ function buildStations() {
   STATIONS = [...land, ...obs];
 }
 
-export const BOUNDS = { lonMin: 119.25, lonMax: 123.8, latMin: 21.6, latMax: 25.5 };   // 東界延伸到琉球海溝附近
+export const BOUNDS = { lonMin: 119.25, lonMax: 124.6, latMin: 21.6, latMax: 25.5 };   // 東界延伸到石垣島、琉球海溝西段
 const LAT0 = 23.7, KX = 111.32 * Math.cos(LAT0 * Math.PI / 180), KY = 110.57;
 
 // 平面近似距離（公里），台灣尺度誤差 < 1%

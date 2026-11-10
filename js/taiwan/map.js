@@ -127,6 +127,22 @@ export class TaiwanMap {
     }
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(this.layer, 0, 0); ctx.restore();
 
+    // 琉球海溝（地震序列時顯示）：虛線＋三角形齒（齒朝向上覆板塊，也就是北側）
+    if (st.trench) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(196,181,253,.9)'; ctx.fillStyle = 'rgba(196,181,253,.9)'; ctx.lineWidth = 2; ctx.setLineDash([10, 6]);
+      ctx.beginPath(); st.trench.forEach(([lon, lat], i) => { const [x, y] = P(lon, lat); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+      ctx.setLineDash([]);
+      for (let i = 0; i < st.trench.length - 1; i++) {
+        const [ax, ay] = P(...st.trench[i]), [bx, by] = P(...st.trench[i + 1]);
+        const mx = (ax + bx) / 2, my = (ay + by) / 2, dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1, nx = dy / L, ny = -dx / L;
+        ctx.beginPath(); ctx.moveTo(mx - dx / L * 6, my - dy / L * 6); ctx.lineTo(mx + dx / L * 6, my + dy / L * 6); ctx.lineTo(mx + nx * 9, my + ny * 9); ctx.closePath(); ctx.fill();
+      }
+      const [lx, ly] = P(...st.trench[3]);
+      ctx.font = 'bold 12px "Noto Sans TC"'; ctx.fillText('琉球海溝', lx - 20, ly + 20);
+      ctx.restore();
+    }
+
     // 放大到 3 倍以上時標示鄉鎮名稱
     if (z >= 3) {
       ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.font = `${Math.min(13, 6 + z)}px "Noto Sans TC"`; ctx.textAlign = 'center';

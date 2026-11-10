@@ -4,6 +4,7 @@ import { createScenario, locate, locateRobust, noticeCandidates, NOTICE, trigger
 import { siteOf, siteClass } from './site.js';
 import { INTENSITY_COLORS, intensity, intensityIndex } from '../detector.js';
 import { TaiwanMap, shortInt } from './map.js';
+import { buildSequence, TRENCH } from './sequence.js';
 
 const $ = id => document.getElementById(id);
 // 只有內容改變才寫入 DOM（避免每一格畫面都重建 HTML，造成卡頓）
@@ -62,6 +63,7 @@ export class TaiwanEEW {
     $('twRandom').onclick = () => { this.selectedReal = null; $('twPreset').value = ''; this.fill(randomQuake()); };
     ['twLon', 'twLat', 'twDepth', 'twM'].forEach(id => $(id).oninput = () => { $('twPreset').value = ''; this.selectedReal = null; this.syncLabels(); });
     $('twStart').onclick = () => this.start();
+    this.initSequence();
 
     const counties = [...new Set(TOWNS.map(t => t.county))];
     $('twHomeCounty').innerHTML = counties.map(c => `<option${c === '臺北市' ? ' selected' : ''}>${c}</option>`).join('');
@@ -111,13 +113,16 @@ export class TaiwanEEW {
   }
   get home() { const t = this.homeTown; return t && { name: `${t.county}${t.name}`, short: t.name, lon: t.c[0], lat: t.c[1], site: t }; }
 
-  start() {
+  start(qOverride = null) {
     if (!this.homeTown) return;
     // 第一次按「發生地震」時請求系統通知權限（瀏覽器規定必須由使用者操作觸發）
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
     // 真實地震回放：直接用官方目錄的精確震源值
-    this.real = this.selectedReal || null;
-    const q = this.real ? { lon: this.real.lon, lat: this.real.lat, depth: this.real.depth, M: this.real.M } : this.readQuake();
+    // 地震序列直接指定震源（qOverride）；真實地震回放用官方目錄值；否則讀表單
+    this.real = qOverride ? null : (this.selectedReal || null);
+    if (!qOverride) { this.seqMax = null; this.seqTrench = null; }   // 單一地震：不顯示序列的累計震度
+    const q = qOverride ? { lon: qOverride.lon, lat: qOverride.lat, depth: qOverride.depth, M: qOverride.M }
+      : this.real ? { lon: this.real.lon, lat: this.real.lat, depth: this.real.depth, M: this.real.M } : this.readQuake();
     const t0 = Date.now() + 1500;
     this.sc = createScenario(q, t0);
     // 真實地震回放：虛擬測站 6 km 內若有當時的真實測站，就改用真實量到的 PGA／PGV
@@ -180,7 +185,9 @@ export class TaiwanEEW {
   //   step()：由計時器每 0.1 秒執行（觸發、定位、發報、聲音、速報卡），不受畫面快慢影響
   //   tick()：由瀏覽器畫面更新呼叫，只負責畫地圖
   step(now) {
-    if (!TOWNS.length || !this.sc) return;
+    if (!TOWNS.length) return;
+    if (this.seq) this.stepSequence(now);   // 地震序列：時間到了就讓下一個地震發生
+    if (!this.sc) return;
     const sc = this.sc;
     const picks = this.currentPicks(now);
     const picked = new Set(picks.map(p => p.name));
@@ -221,7 +228,7 @@ export class TaiwanEEW {
     // 速報等級也可能在兩報之間因測站實測震度升級
     if (this.sol && !this.reveal && this.level === 'normal' && this.isEmergency()) { this.report++; this.snapshotIssue(now); this.announce(now, null, true); }   // 升級為強震即時訊息也算新的一報
 
-    if (!this.reveal && now - sc.q.t0 > END_MS) { this.reveal = true; $('twStart').disabled = false; document.body.classList.remove('quake-on'); }
+    if (!this.reveal && now - sc.q.t0 > END_MS) { this.reveal = true; $('twStart').disabled = !!this.seq; document.body.classList.remove('quake-on'); }
     // 範圍通知階段：地圖只畫正方形警示區域（尚未確認，不逐鄉鎮上色）；正式速報後才逐鄉鎮上色
     // 鄉鎮震度上色：正式速報後才上色（範圍通知階段未確認，不上色）
     // 區塊方框：只亮在「已偵測到 P 波」的區域（見 pBlocks），對這些區塊做預警
@@ -235,9 +242,9 @@ export class TaiwanEEW {
 
   tick(now) {
     if (!TOWNS.length) return;
-    if (!this.sc || !this.frame) { this.map.draw({ mode: this.mode, now, home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, pickPoint: this.readQuake() }); return; }
+    if (!this.sc || !this.frame) { this.map.draw({ mode: this.mode, now, home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, pickPoint: this.readQuake(), townInts: this.seqMax, trench: this.seqTrench }); return; }
     const sc = this.sc, { picked, stationInts } = this.frame;
-    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.sol?.prelim ? null : this.townInts,
+    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.seqMax ?? (this.sol?.prelim ? null : this.townInts), trench: this.seqTrench,
       region: this.pRegion, picked, stationInts, rejected: this.rejected,
       realStations: this.reveal && this.real ? this.real.stations : null,
       level: this.sol?.prelim ? null : this.level,
@@ -280,6 +287,7 @@ export class TaiwanEEW {
     const sol = this.sol; if (!sol) return;
     this.townInts = TOWNS.map(tw => this.plumMax(predictAt(sol.M, sourceDist(tw.c[0], tw.c[1], sol), tw, sol.depth).n, tw));
     this.townWorst = this.calcWorst(sol);
+    if (this.seq && !sol.prelim) this.mergeSeqMax();
     let mi = 0; this.townInts.forEach((v, i) => { if (intensityIndex(v) > intensityIndex(this.townInts[mi])) mi = i; });
     this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
     this.region = this.computeRegion(sol);
@@ -291,10 +299,85 @@ export class TaiwanEEW {
     this.sol = sol; sol.calcMs = calcMs; sol.issued = now;
     this.townInts = TOWNS.map(tw => this.plumMax(predictAt(sol.M, sourceDist(tw.c[0], tw.c[1], sol), tw, sol.depth).n, tw));
     this.townWorst = this.calcWorst(sol);
+    if (this.seq && !sol.prelim) this.mergeSeqMax();
     let mi = 0; this.townInts.forEach((v, i) => { if (intensityIndex(v) > intensityIndex(this.townInts[mi])) mi = i; });
     this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
     this.region = this.computeRegion(sol);
     this.checkHomeAlert(now);
+  }
+
+  // ---- 海溝型地震序列 ----
+  // 序列中地圖顯示「目前為止每個鄉鎮遇到的最大預估震度」，不會因為下一個地震開始而消失
+  mergeSeqMax() {
+    const prev = this.seqMax ?? TOWNS.map(() => '0');
+    this.seqMax = prev.map((v, i) => { const n = this.townInts[i]; return n && intensityIndex(n) > intensityIndex(v) ? n : v; });
+  }
+  initSequence() {
+    const sync = () => { $('seqMV').textContent = `M ${(+$('seqM').value).toFixed(1)}`; };
+    $('seqM').oninput = sync; sync();
+    $('seqStart').onclick = () => this.startSequence();
+    $('seqStop').onclick = () => this.stopSequence();
+  }
+  startSequence() {
+    const seq = buildSequence(+$('seqM').value, { foreshocks: $('seqFore').checked });
+    this.seq = { ...seq, t0: Date.now() + 500, idx: -1, results: [] };
+    this.seqMax = null; this.seqTrench = TRENCH;
+    $('seqStart').disabled = true; $('seqStop').disabled = false; $('twStart').disabled = true;
+    $('secSeq').open = true; $('secSetup').open = false;
+    this.renderSeq(Date.now());
+  }
+  stopSequence() {
+    if (!this.seq) return;
+    this.recordSeqResult();
+    this.seq.stopped = true;
+    this.renderSeq(Date.now());
+    this.seq = null;
+    $('seqStart').disabled = false; $('seqStop').disabled = true; $('twStart').disabled = false;
+  }
+  // 每 0.1 秒檢查：下一個地震的播放時間到了 → 記錄上一個地震的速報成績，讓下一個地震發生
+  stepSequence(now) {
+    const s = this.seq, next = s.events[s.idx + 1];
+    if (next && now - s.t0 >= next.at) {
+      this.recordSeqResult();
+      s.idx++;
+      this.start(next);
+      this.renderSeq(now);
+    } else if (!next && this.reveal) {   // 最後一個地震也結束了
+      this.recordSeqResult();
+      $('seqNote').textContent = '序列結束';
+      this.renderSeq(now);
+      this.seq = null;
+      $('seqStart').disabled = false; $('seqStop').disabled = true;
+    } else if (now - (s.lastRender ?? 0) > 1000) this.renderSeq(now);
+  }
+  // 記錄目前這個地震的速報成績（第一報時間、規模與震央誤差、速報等級）
+  recordSeqResult() {
+    const s = this.seq; if (!s || s.idx < 0 || s.results[s.idx] || !this.sc) return;
+    const q = this.sc.q, so = this.sol && !this.sol.prelim ? this.sol : null;
+    s.results[s.idx] = so ? {
+      first: this.firstIssued ? (this.firstIssued - q.t0) / 1000 : null,
+      notice: this.firstNotice ? (this.firstNotice - q.t0) / 1000 : null,
+      M: so.M, dM: so.M - q.M, epi: distKm(q.lon, q.lat, so.lon, so.lat), level: this.level, reports: this.report,
+    } : { missed: true, notice: this.firstNotice ? (this.firstNotice - q.t0) / 1000 : null };
+  }
+  renderSeq(now) {
+    const s = this.seq; if (!s) return;
+    s.lastRender = now;
+    const done = s.results.filter(Boolean), ok = done.filter(r => !r.missed);
+    const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN;
+    const next = s.events[s.idx + 1];
+    $('seqNote').textContent = next ? `下一個 ${Math.max(0, Math.ceil((s.t0 + next.at - now) / 1000))} 秒後` : '最後一個';
+    const sum = `主震 M${s.main.M.toFixed(1)}・破裂長度約 ${s.rupture.L.toFixed(0)} km・共 ${s.events.length} 個地震<br>
+      已處理 ${done.length} 個：發布速報 ${ok.length} 個${done.length - ok.length ? `、未發布 ${done.length - ok.length} 個` : ''}`
+      + (ok.length ? `<br>平均第一報 ${avg(ok.map(r => r.first)).toFixed(1)} 秒・規模誤差 ±${avg(ok.map(r => Math.abs(r.dM))).toFixed(2)}・震央誤差 ${avg(ok.map(r => r.epi)).toFixed(1)} km` : '');
+    const rows = s.events.map((e, i) => {
+      const r = s.results[i], cur = i === s.idx && !r, st = r ? 'done' : cur ? 'now' : 'wait';
+      const res = r ? (r.missed ? '未發布速報（規模或確認站數不足）' : `第一報 ${r.first?.toFixed(1)} 秒・估 M${r.M.toFixed(1)}・震央差 ${r.epi.toFixed(1)} km${r.level === 'emergency' ? '・強震' : ''}`)
+        : cur ? '進行中…' : `${Math.max(0, Math.ceil((s.t0 + e.at - now) / 1000))} 秒後`;
+      return `<div class="seq-row ${st}"><span>${r ? '✓' : cur ? '▶' : '○'}</span><span class="k1 ${e.kind === '主震' ? 'main' : ''}">${e.kind}</span>
+        <span class="mm">M${e.M.toFixed(1)}</span><span class="rs" title="${e.realLabel}">${e.realLabel}・${res}</span></div>`;
+    }).join('');
+    setHTML($('seqList'), `<div class="seq-sum">${sum}</div>${rows}`);
   }
 
   // ---- 背景計算 ----

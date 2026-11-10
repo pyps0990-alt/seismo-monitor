@@ -141,6 +141,17 @@
             </div>
           </details>
 
+          <details class="sec" id="secSeq">
+            <summary><span>海溝型地震序列</span><span class="sum-note" id="seqNote"></span></summary>
+            <div class="sec-body">
+              <p class="hint">在台灣東方外海的琉球隱沒帶產生「前震 → 主震 → 餘震」序列，依序讓速報系統處理。餘震依 Omori 定律、古騰堡－芮克特關係與 Båth 定律產生，時間快轉約 60 倍。</p>
+              <label class="field col"><span>主震規模 <b id="seqMV"></b></span><input id="seqM" type="range" min="7" max="9" step="0.1" value="8"></label>
+              <label class="switch"><input id="seqFore" type="checkbox" checked><span class="track"></span><span>包含前震</span></label>
+              <div class="row2" style="margin-top:12px"><button id="seqStart" class="btn primary">開始序列</button><button id="seqStop" class="btn" disabled>停止</button></div>
+              <div id="seqList" class="seq-list"></div>
+            </div>
+          </details>
+
           <details class="sec" id="secHome">
             <summary><span>我的位置</span><span class="sum-note" id="twHomeName"></span></summary>
             <div class="sec-body">

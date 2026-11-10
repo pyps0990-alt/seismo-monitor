@@ -102,22 +102,30 @@ export class TaiwanMap {
     for (let lat = 22; lat <= 25; lat++) { const [, y] = P(0, lat); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); ctx.fillText(`${lat}°N`, 4, y - 3); }
 
     // 鄉鎮區塊（套用縮放平移 transform；線寬除以倍率保持粗細）
+    // 效能：358 個鄉鎮多邊形畫在「快取圖層」上，只有震度、縮放位置、圖層模式、我的位置、滑鼠所在鄉鎮改變時才重畫；
+    // 其餘每一格畫面只要貼上快取圖層（一次 drawImage），大幅減少繪圖負擔
     const v = this.view, z = v.z;
-    ctx.save();
-    ctx.setTransform(this.dpr * z, 0, 0, this.dpr * z, this.dpr * v.tx, this.dpr * v.ty);
-    TOWNS.forEach((t, i) => {
-      let fill = '#1f2733';
-      if (st.mode === 'site') fill = vs30Color(t.vs30);
-      else { const n = st.townInts?.[i]; if (n && n !== '0') fill = INTENSITY_COLORS[n]; }
-      ctx.fillStyle = fill; ctx.fill(this.townPaths[i]);
-    });
-    ctx.strokeStyle = 'rgba(10,12,16,.55)'; ctx.lineWidth = 0.5 / z;
-    ctx.stroke(this.townBorders);
-    ctx.strokeStyle = 'rgba(226,232,240,.55)'; ctx.lineWidth = 1.1 / z; ctx.stroke(this.countyPath);
-    ctx.strokeStyle = 'rgba(226,232,240,.75)'; ctx.lineWidth = 1.2 / z; ctx.stroke(this.coastPath);
-    if (st.homeTown != null) { ctx.strokeStyle = '#2dd4bf'; ctx.lineWidth = 2.2 / z; ctx.stroke(this.townPaths[st.homeTown]); }
-    if (st.hoverTown != null) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.8 / z; ctx.stroke(this.townPaths[st.hoverTown]); }
-    ctx.restore();
+    const key = `${this.canvas.width}x${this.canvas.height}|${z.toFixed(4)}|${v.tx.toFixed(1)}|${v.ty.toFixed(1)}|${st.mode}|${st.homeTown}|${st.hoverTown}`;
+    if (!this.layer || key !== this.layerKey || st.townInts !== this.layerInts) {
+      this.layer ??= document.createElement('canvas');
+      if (this.layer.width !== this.canvas.width || this.layer.height !== this.canvas.height) { this.layer.width = this.canvas.width; this.layer.height = this.canvas.height; }
+      const lc = this.layer.getContext('2d');
+      lc.setTransform(1, 0, 0, 1, 0, 0); lc.clearRect(0, 0, this.layer.width, this.layer.height);
+      lc.setTransform(this.dpr * z, 0, 0, this.dpr * z, this.dpr * v.tx, this.dpr * v.ty);
+      TOWNS.forEach((t, i) => {
+        let fill = '#1f2733';
+        if (st.mode === 'site') fill = vs30Color(t.vs30);
+        else { const n = st.townInts?.[i]; if (n && n !== '0') fill = INTENSITY_COLORS[n]; }
+        lc.fillStyle = fill; lc.fill(this.townPaths[i]);
+      });
+      lc.strokeStyle = 'rgba(10,12,16,.55)'; lc.lineWidth = 0.5 / z; lc.stroke(this.townBorders);
+      lc.strokeStyle = 'rgba(226,232,240,.55)'; lc.lineWidth = 1.1 / z; lc.stroke(this.countyPath);
+      lc.strokeStyle = 'rgba(226,232,240,.75)'; lc.lineWidth = 1.2 / z; lc.stroke(this.coastPath);
+      if (st.homeTown != null) { lc.strokeStyle = '#2dd4bf'; lc.lineWidth = 2.2 / z; lc.stroke(this.townPaths[st.homeTown]); }
+      if (st.hoverTown != null) { lc.strokeStyle = '#fff'; lc.lineWidth = 1.8 / z; lc.stroke(this.townPaths[st.hoverTown]); }
+      this.layerKey = key; this.layerInts = st.townInts;
+    }
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(this.layer, 0, 0); ctx.restore();
 
     // 放大到 3 倍以上時標示鄉鎮名稱
     if (z >= 3) {

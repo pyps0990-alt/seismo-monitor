@@ -6,6 +6,8 @@ import { INTENSITY_COLORS, intensity, intensityIndex } from '../detector.js';
 import { TaiwanMap, shortInt } from './map.js';
 
 const $ = id => document.getElementById(id);
+// 只有內容改變才寫入 DOM（避免每一格畫面都重建 HTML，造成卡頓）
+const setHTML = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };
 const PROCESS_MS = 300;
 const MAX_REPORTS = Infinity;   // 報數無上限：每有新測站或規模更新就發新一報
 const END_MS = 75000;
@@ -39,6 +41,9 @@ export class TaiwanEEW {
       : '預估式：手設教學模型';
     for (const t of TOWNS) Object.assign(t, siteOf(t.c[0], t.c[1]));
     $('twN').textContent = STATIONS.length;
+    this.startWorker();   // 先把背景計算執行緒準備好（載入鄉鎮與模型），地震發生時不用再等
+    this.cells ??= this.buildCells(); this.cellTowns ??= this.buildCellTowns();   // 區塊網格也先建好
+    setInterval(() => this.step(Date.now()), 100);   // 速報邏輯每 0.1 秒執行一次（與畫面繪製分開）
     // 真實地震回放：震源用官方目錄值，結束後用當時各測站實測震度對答案
     try { this.realEvents = await (await fetch('data/real-events.json')).json(); } catch { this.realEvents = []; }
     for (const ev of this.realEvents) for (const st of ev.stations) {
@@ -126,7 +131,7 @@ export class TaiwanEEW {
       }
       this.realReplaced = replaced;
     }
-    Object.assign(this, { sol: null, report: 0, lastN: 0, lastUsed: 0, lastReportN: 0, issued: null, rejected: null, realEval: null, lastSpeech: 0, lastCalc: 0, firstIssued: null, firstNotice: null, prelim: null, cancelled: 0, maxLand: null, region: null, homeAlerted: null, homeInRegion: false, localPick: null, reveal: false,
+    Object.assign(this, { sol: null, report: 0, lastN: 0, lastUsed: 0, lastReportN: 0, issued: null, busy: false, job: null, rejected: null, realEval: null, lastSpeech: 0, lastCalc: 0, firstIssued: null, firstNotice: null, prelim: null, cancelled: 0, maxLand: null, region: null, homeAlerted: null, homeInRegion: false, localPick: null, reveal: false,
       townInts: null, lastTick: null, arrived: false, level: null });
 
     // 本站（我的位置）收到的地震波 → 送進模擬器
@@ -148,7 +153,7 @@ export class TaiwanEEW {
     document.body.classList.remove('eew-emergency');
     this.map.userMoved = false; // 新地震重新開始自動追蹤
     $('eewCard').className = 'eew-card idle waiting';
-    $('eewCard').innerHTML = `<div class="ttl">${this.real ? `回放：${this.real.name}` : '監測中…'}</div><p>等待測站偵測 P 波</p>`;
+    setHTML($('eewCard'), `<div class="ttl">${this.real ? `回放：${this.real.name}` : '監測中…'}</div><p>等待測站偵測 P 波</p>`);
     // 地震開始：收起設定、展開各地預估；手機上捲回地圖
     $('secSetup').open = false; $('secHome').open = false; $('secTowns').open = true;
     $('mapStatus').hidden = false;
@@ -171,9 +176,11 @@ export class TaiwanEEW {
     return now >= s.ts ? intensity(s.pga, s.pgv) : intensity(s.pAmp, s.pgv * 0.3);
   }
 
-  tick(now) {
-    if (!TOWNS.length) return;
-    if (!this.sc) { this.map.draw({ mode: this.mode, now, home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, pickPoint: this.readQuake() }); return; }
+  // 速報邏輯與畫面繪製分開：
+  //   step()：由計時器每 0.1 秒執行（觸發、定位、發報、聲音、速報卡），不受畫面快慢影響
+  //   tick()：由瀏覽器畫面更新呼叫，只負責畫地圖
+  step(now) {
+    if (!TOWNS.length || !this.sc) return;
     const sc = this.sc;
     const picks = this.currentPicks(now);
     const picked = new Set(picks.map(p => p.name));
@@ -198,50 +205,15 @@ export class TaiwanEEW {
     // 有新觸發時每 PROCESS_MS 計算一次（測站密集時觸發是連續進來的，不能等「安靜」才算）
     // 規模還在估算（Pd 未收滿）時，即使沒有新觸發也每秒重算一次：P 波視窗收滿後規模會變準，要即時更新
     const pdPending = this.sol && !this.sol.prelim && this.sol.nPd < 5 && now - (this.lastCalc ?? 0) >= 1000;
-    if (!this.reveal && n && now - (this.lastCalc ?? 0) >= PROCESS_MS && this.report < MAX_REPORTS
+    // 計算交給背景執行緒（Web Worker）：送出工作後畫面照常繪製，結果回來再套用 → 計算再久也不卡畫面
+    if (!this.reveal && !this.busy && n && now - (this.lastCalc ?? 0) >= PROCESS_MS && this.report < MAX_REPORTS
         && ((n > this.lastN && (this.report === 0 || n - this.lastReportN >= step)) || pdPending)) {
       this.lastN = n; this.lastCalc = now;
       const idle = sc.stations.filter(s => !picked.has(s.name));
-      const t = performance.now();
-      // 接續搜尋：沿用上一個正式解縮小搜尋範圍（快、不卡頓）；每 3 秒做一次完整搜尋避免卡在錯誤位置
+      // 接續搜尋：沿用上一個正式解縮小搜尋範圍；每 3 秒做一次完整搜尋避免卡在錯誤位置
       const fullSearch = !this.sol || this.sol.prelim || now - (this.lastFullSearch ?? 0) > 3000;
       if (fullSearch) this.lastFullSearch = now;
-      const sol = locateRobust(picks, idle, now, fullSearch ? null : this.sol);
-      const morePd = sol && this.sol && sol.nPd > (this.sol.nPd ?? 0);    // 有更多測站收滿 Pd → 規模更新，值得發新一報
-      if (sol && (this.report === 0 || sol.n - this.lastUsed >= step || morePd)) {
-        // ---- 正式速報：≥3 站互相確認 ----
-        // 震央、規模、地圖每次都即時修正（靜默更新）；只有「明顯變化」才發布新的一報（報號＋聲音）
-        const prevHome = this.issued?.home ?? null;
-        this.prelim = null;
-        this.setForecast(sol, now, performance.now() - t);
-        this.lastUsed = sol.n; this.lastReportN = n;
-        this.rejected = new Set(sol.rejected.map(p => p.name));
-        if (this.isSignificant(sol, now)) {
-          this.report++;
-          this.snapshotIssue(now);
-          this.announce(now, prevHome);
-        }
-        this.follow();
-      } else if (!sol && this.report === 0) {
-        // ---- 範圍通知：一偵測到 P 波就用最近 5 秒內的觸發先估震央（尚未確認）----
-        // 發送標準（見 eew.js noticeCandidates）：3 站互相確認，或 2 站確認且 P 波振幅 ≥ 3 gal；初估規模 ≥ 4.0
-        // 400 次模擬：誤報率由「任一站觸發就通知」的 83.5% 降到 2.0%，沒有漏報
-        const cand = noticeCandidates(picks, now);
-        if (cand) {
-          const recent = cand.picks;
-          const near = idle.map(s => [distKm(s.lon, s.lat, recent[0].lon, recent[0].lat), s]).filter(([d]) => d < 150)
-            .sort((a, b) => a[0] - b[0]).slice(0, 40).map(([, s]) => s);
-          const pv = locate(recent.slice(0, 3), near, now);
-          if (pv.mPartial || pv.M >= NOTICE.MIN_M) {   // 規模還在估算（Pd 視窗未滿）時不擋
-            Object.assign(pv, { prelim: true, n: recent.length, used: recent, rejected: [], rule: cand.rule });
-            const first = !this.prelim;
-            if (first) this.prelim = { since: recent[0].tp };
-            this.setForecast(pv, now, performance.now() - t);
-            if (first) this.announcePrelim(now);
-            this.follow();
-          }
-        }
-      }
+      this.solveAsync(picks, idle, now, fullSearch ? null : this.sol, n);
     }
     // 範圍通知 5 秒內沒有其他測站確認 → 判定為雜訊，取消通知
     if (this.prelim && this.report === 0 && now - this.prelim.since > 5000) this.cancelPrelim(now);
@@ -254,15 +226,22 @@ export class TaiwanEEW {
     // 鄉鎮震度上色：正式速報後才上色（範圍通知階段未確認，不上色）
     // 區塊方框：只亮在「已偵測到 P 波」的區域（見 pBlocks），對這些區塊做預警
     this.pRegion = this.reveal ? null : this.pBlocks(picks);
+    this.frame = { picked, stationInts };
+    this.render(now, n);
+    this.updateTip(now);   // 滑鼠停著不動時，資訊框也跟著震度更新
+    if (this.reveal) document.body.classList.remove('eew-emergency');
+    if (this.reveal && now - sc.q.t0 > END_MS + 60000) { this.sc = null; this.frame = null; this.renderIdle(); }
+  }
+
+  tick(now) {
+    if (!TOWNS.length) return;
+    if (!this.sc || !this.frame) { this.map.draw({ mode: this.mode, now, home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, pickPoint: this.readQuake() }); return; }
+    const sc = this.sc, { picked, stationInts } = this.frame;
     this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.sol?.prelim ? null : this.townInts,
       region: this.pRegion, picked, stationInts, rejected: this.rejected,
       realStations: this.reveal && this.real ? this.real.stations : null,
       level: this.sol?.prelim ? null : this.level,
       home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, reveal: this.reveal, pickPoint: this.reveal ? this.readQuake() : null });
-    this.render(now, n);
-    this.updateTip(now);   // 滑鼠停著不動時，資訊框也跟著震度更新
-    if (this.reveal) document.body.classList.remove('eew-emergency');
-    if (this.reveal && now - sc.q.t0 > END_MS + 60000) { this.sc = null; this.renderIdle(); }
   }
 
   // 自動追蹤：每一報把地圖飛到推算震央；規模越大顯示範圍越廣（倍率越小）
@@ -316,6 +295,55 @@ export class TaiwanEEW {
     this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
     this.region = this.computeRegion(sol);
     this.checkHomeAlert(now);
+  }
+
+  // ---- 背景計算 ----
+  // 只傳必要欄位給 worker（測站物件很大，複製成本高）
+  static slim = p => ({ name: p.name, lon: p.lon, lat: p.lat, tp: p.tp, pAmp: p.pAmp, pd: p.pd, type: p.type, local: p.local, isFalse: p.isFalse, site: p.site ? { ampA: p.site.ampA } : undefined });
+  startWorker() {
+    if (this.worker) return;
+    this.worker = new Worker(new URL('./eew-worker.js', import.meta.url), { type: 'module' });
+    this.worker.onmessage = ({ data }) => this.onSolved(data);
+    this.jobId = 0;
+  }
+  solveAsync(picks, idle, now, prev, n) {
+    this.startWorker();
+    this.busy = true;
+    const id = ++this.jobId;
+    this.job = { id, n, sc: this.sc };
+    const S = TaiwanEEW.slim;
+    this.worker.postMessage({ id, type: 'solve', picks: picks.map(S), idle: idle.map(S), now,
+      prev: prev && { lon: prev.lon, lat: prev.lat, depth: prev.depth, M: prev.M }, wantNotice: this.report === 0 });
+  }
+
+  onSolved({ id, sol, notice, calcMs }) {
+    this.busy = false;
+    const job = this.job;
+    if (!job || job.id !== id || job.sc !== this.sc || !this.sc || this.reveal) return;   // 已過期（地震結束或重新開始）
+    const now = Date.now(), n = job.n;
+    const morePd = sol && this.sol && sol.nPd > (this.sol.nPd ?? 0);    // 有更多測站收滿 Pd → 規模更新
+    if (sol && (this.report === 0 || sol.n - this.lastUsed >= 1 || morePd)) {
+      // ---- 正式速報：≥3 站互相確認 ----
+      // 震央、規模、地圖每次都即時修正（靜默更新）；只有「明顯變化」才發布新的一報（報號＋聲音）
+      const prevHome = this.issued?.home ?? null;
+      this.prelim = null;
+      this.setForecast(sol, now, calcMs);
+      this.lastUsed = sol.n; this.lastReportN = n;
+      this.rejected = new Set(sol.rejected.map(p => p.name));
+      if (this.isSignificant(sol, now)) {
+        this.report++;
+        this.snapshotIssue(now);
+        this.announce(now, prevHome);
+      }
+      this.follow();
+    } else if (!sol && notice && this.report === 0) {
+      // ---- 範圍通知（發送標準見 eew.js noticeCandidates；400 次模擬誤報率 83.5% → 2.0%）----
+      const first = !this.prelim;
+      if (first) this.prelim = { since: notice.used[0].tp };
+      this.setForecast(notice, now, calcMs);
+      if (first) this.announcePrelim(now);
+      this.follow();
+    }
   }
 
   // ---- 新報發布門檻 ----
@@ -495,7 +523,7 @@ export class TaiwanEEW {
     this.cancelled = (this.cancelled || 0) + 1;
     $('eewBanner').hidden = true;
     $('eewCard').className = 'eew-card idle waiting';
-    $('eewCard').innerHTML = `<div class="ttl">範圍通知已取消</div><p>5 秒內沒有其他測站確認，判定為單站雜訊（已取消 ${this.cancelled} 次）。持續監測中…</p>`;
+    setHTML($('eewCard'), `<div class="ttl">範圍通知已取消</div><p>5 秒內沒有其他測站確認，判定為單站雜訊（已取消 ${this.cancelled} 次）。持續監測中…</p>`);
     this.say('通知取消');
   }
 
@@ -569,7 +597,7 @@ export class TaiwanEEW {
     if (prelim) {
       // 正式速報之前：只呈現「區域警示方框」與你是否在框內，不顯示任何震度數字（尚未確認，避免誤導）
       const inZone = this.homeInRegion;
-      $('eewCard').innerHTML = `
+      setHTML($('eewCard'), `
         <div class="eew-type"><span>${title}</span><small>${sub}</small></div>
         <div class="eew-you">
           <div class="eew-lv zone ${inZone ? 'in' : ''}"><b>${inZone ? '!' : '—'}</b><small>${inZone ? '警示區內' : '區外'}</small></div>
@@ -580,13 +608,13 @@ export class TaiwanEEW {
           </div>
         </div>
         <div class="eew-epi" style="margin-top:12px">${this.sol.rule}（海底站 ${this.sol.used.filter(p => p.type === 'obs').length}），初估震源：${epi.where.replace('位於', '')}<br>震度數值將於正式速報（≥3 站定位）後公布</div>
-        <div class="eew-meta">發震後 ${((this.firstNotice - t0) / 1000).toFixed(1)} 秒範圍通知 · ${this.region ? `${this.region.blocks.length} 個方塊、約 ${Math.round(this.region.areaKm2 / 100) * 100} km²（保守計入震央 ±${this.region.u} km、規模 +${this.region.sigM}）` : '尚未達警示門檻'}</div>`;
+        <div class="eew-meta">發震後 ${((this.firstNotice - t0) / 1000).toFixed(1)} 秒範圍通知 · ${this.region ? `${this.region.blocks.length} 個方塊、約 ${Math.round(this.region.areaKm2 / 100) * 100} km²（保守計入震央 ±${this.region.u} km、規模 +${this.region.sigM}）` : '尚未達警示門檻'}</div>`);
       this.renderBanner(kind, title, h, null, left, sec);
       $('twCount').textContent = '正式速報後顯示';
       $('twTable').innerHTML = '<p class="hint">範圍通知階段只顯示警示方框，震度數值待正式速報確認後公布。</p>';
       return;
     }
-    $('eewCard').innerHTML = `
+    setHTML($('eewCard'), `
       <div class="eew-type"><span>${title}</span><small>${sub}</small></div>
       <div class="eew-you">
         <div class="eew-lv" style="background:${INTENSITY_COLORS[hp.n]}"><b>${shortInt(hp.n)}</b><small>${prelim ? '估計' : '級'}</small></div>
@@ -608,7 +636,7 @@ export class TaiwanEEW {
         ${this.firstNotice ? `發震後 ${((this.firstNotice - t0) / 1000).toFixed(1)} 秒範圍通知 · ` : ''}${this.firstIssued ? `${((this.firstIssued - t0) / 1000).toFixed(1)} 秒正式速報 · ` : ''}預警 ${lead > 0 ? lead.toFixed(1) + ' 秒' : '無'} ·
         ${this.region ? `警示區 ${this.region.blocks.length} 個方塊、約 ${Math.round(this.region.areaKm2 / 100) * 100} km²（≥${this.region.thr} 級，保守計入震央誤差 ±${this.region.u} km、規模 +${this.region.sigM}${this.region.sigModel ? `、模型誤差 ×${(10 ** this.region.sigModel).toFixed(1)}` : ''}）· ` : ''}<span class="q ${so.n < 4 ? '' : 'ok'}">${so.n} 站定位（海底 ${so.used.filter(p => p.type === 'obs').length}）</span>${so.nPd ? ` · 規模由 ${so.nPd} 站完整 Pd 計算` : ' · 規模估算中'}${so.rejected.length ? ` · 排除 ${so.rejected.length} 個誤觸發` : ''} · 本站${this.localPick ? '已偵測 P 波' : '未偵測'}
       </div>
-      ${this.reveal ? this.truthHtml() : ''}`;
+      ${this.reveal ? this.truthHtml() : ''}`);
     this.renderBanner(kind, title, h, hp, left, sec);
 
     // 鄉鎮預估（第一報起即顯示所有 1 級以上鄉鎮）；表格每 0.5 秒更新一次即可
@@ -634,9 +662,9 @@ export class TaiwanEEW {
     const tag = hp ? `<span class="bn-int" style="background:${INTENSITY_COLORS[hp.n]}">${shortInt(hp.n)}</span>`
       : `<span class="bn-int" style="background:${this.homeInRegion ? '#facc15' : '#4b5563'}">${this.homeInRegion ? '區內' : '區外'}</span>`;
     const showSec = hp || this.homeInRegion;
-    b.innerHTML = `<span class="bn-type">${title}</span>${tag}
+    setHTML(b, `<span class="bn-type">${title}</span>${tag}
       <span class="bn-place">${h.name}</span>
-      <span class="bn-sec">${showSec ? (left > 0 ? `${sec}<small>秒</small>` : '搖晃中') : ''}</span>`;
+      <span class="bn-sec">${showSec ? (left > 0 ? `${sec}<small>秒</small>` : '搖晃中') : ''}</span>`);
   }
 
   truthHtml() {
@@ -674,8 +702,8 @@ export class TaiwanEEW {
     $('twTable').innerHTML = `<p class="hint">發生地震後顯示</p>`; $('twCount').textContent = '';
     $('secSetup').open = true; $('secTowns').open = false;
     $('eewCard').className = 'eew-card idle';
-    $('eewCard').innerHTML = `<div class="ttl">待命中</div>
-      <p>偵測到 P 波就發布範圍通知；3 站確認後發布正式速報。規模 &gt; ${EMERGENCY_M} 且陸上測站實測 ≥ ${EMERGENCY_INT} 級時為強震即時訊息。</p>`;
+    setHTML($('eewCard'), `<div class="ttl">待命中</div>
+      <p>偵測到 P 波就發布範圍通知；3 站確認後發布正式速報。規模 &gt; ${EMERGENCY_M} 且陸上測站實測 ≥ ${EMERGENCY_INT} 級時為強震即時訊息。</p>`);
   }
 
   onHover(p, e) {

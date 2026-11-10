@@ -50,16 +50,39 @@ export class Sound {
     }
   }
 
-  // 一般地震速報：高低交替警示音 ×4（約 1.8 秒）
-  eewNormal() {
-    for (let i = 0; i < 4; i++) { this.beep(988, i * 0.45, 0.2); this.beep(740, i * 0.45 + 0.22, 0.2); }
-    return 1.9;
+  // ---- 警報音設計 ----
+  // 參考手機緊急警報的公開規格：美國 WEA／台灣 PWS 等「注意訊號」使用 853 Hz 與 960 Hz 兩個正弦波同時發聲，
+  // 這兩個頻率不和諧、穿透力強，一聽就知道是警報；再搭配「長－短－短」的斷續節奏。
+  // 這裡只參考頻率與節奏的規格，不使用任何 App 或電視台的音檔。
+  dualTone(t, dur, vol = 0.2) {
+    const ac = this.ac(); if (!ac) return;
+    const t0 = ac.currentTime + t;
+    for (const f of [853, 960]) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
+      g.gain.setValueAtTime(vol, t0 + dur - 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(this.master); o.start(t0); o.stop(t0 + dur + 0.02);
+    }
   }
-  // 緊急地震速報：更高、更快的高低交替 ×8，中間夾三連嗶（約 2.6 秒）
+
+  // 區域警示（P 波偵測）：在警示區內 → 雙音快速三響（急）；不在區內 → 柔和兩音提示
+  regionAlert(inside) {
+    if (inside) { [0, 0.32, 0.64].forEach(t => this.dualTone(t, 0.22, 0.24)); return 1.0; }
+    this.note(784, 0, 0.14, 0.7); this.note(1047, 0.16, 0.14, 0.9); return 0.9;
+  }
+  // 一般地震速報：雙音「長－短」一次＋上行提示音（約 1.9 秒）
+  eewNormal() {
+    this.dualTone(0, 0.8, 0.2); this.dualTone(1.0, 0.4, 0.2);
+    this.note(1047, 1.5, 0.12, 0.6);
+    return 2.0;
+  }
+  // 緊急地震速報：雙音「長－短－短」完整節奏（約 2.9 秒），音量較大
   eewEmergency() {
-    for (let i = 0; i < 8; i++) { this.beep(1175, i * 0.3, 0.14, 0.22); this.beep(880, i * 0.3 + 0.15, 0.14, 0.22); }
-    for (let i = 0; i < 3; i++) this.beep(1568, 2.45 + i * 0.12, 0.08, 0.2);
-    return 2.9;
+    this.dualTone(0, 1.2, 0.28); this.dualTone(1.45, 0.55, 0.28); this.dualTone(2.25, 0.55, 0.28);
+    return 3.0;
   }
 
   update() { this.note(1175, 0, 0.1, 0.6); }                               // 速報更新

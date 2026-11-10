@@ -1,3 +1,50 @@
+usp0004c0q M5.7 37 km NE of Hualien City, Taiwan：0 站
+usp0004ekg M5.8 53 km ENE of Donggang, Taiwan：0 站
+usp0004gsy M5.5 20 km NE of Hualien City, Taiwan：0 站
+usp0004j21 M6.3 7 km SSE of Hualien City, Taiwan：0 站
+usp0004j34 M6.7 28 km S of Hualien City, Taiwan：0 站
+usp0004j3s M5.9 32 km S of Hualien City, Taiwan：0 站
+usp0004j3u M5.7 20 km SSE of Hualien City, Taiwan：0 站
+usp0004jaw M5.6 30 km S of Hualien City, Taiwan：0 站
+usp0004jca M5.5 34 km S of Hualien City, Taiwan：0 站
+usp0004jsa M5.9 23 km S of Hualien City, Taiwan：0 站
+usp0004jzj M5.2 26 km E of Hualien City, Taiwan：0 站
+usp0004ktq M5.7 41 km SW of Hualien City, Taiwan：0 站
+usp0004kug M5.5 40 km SE of Puli, Taiwan：0 站
+usp0004php M6.3 113 km ESE of Hengchun, Taiwan：0 站
+usp000560s M6.2 12 km S of Hualien City, Taiwan：0 站
+usp00058aq M5.6 97 km E of Yujing, Taiwan：0 站
+usp0005c2z M5.6 54 km E of Yilan, Taiwan：0 站
+usp0005dd6 M5.9 26 km SSE of Hualien City, Taiwan：0 站
+usp0005end M6.4 52 km SW of Yonakuni, Japan：0 站
+usp0005m4g M5.7 18 km NE of Hualien City, Taiwan：0 站
+usp0006566 M5.4 13 km ENE of Yujing, Taiwan：0 站
+usp0006714 M5.5 21 km E of Hualien City, Taiwan：0 站
+usp0006cyx M6.2 57 km SW of Yonakuni, Japan：0 站
+usp0006d02 M6.6 79 km SW of Yonakuni, Japan：0 站
+usp0006drf M6.4 31 km SSE of Yilan, Taiwan：0 站
+usp0006khs M5.5 97 km S of Hualien City, Taiwan：0 站
+usp0006mv6 M5.6 46 km E of Yilan, Taiwan：0 站
+usp0006tcx M6.2 17 km N of Hualien City, Taiwan：0 站
+usp0006y5m M5.7 100 km E of Yujing, Taiwan：0 站
+usp0006znz M6 18 km SSW of Yilan, Taiwan：0 站
+usp0007ec9 M6.3 63 km ENE of Hualien City, Taiwan：0 站
+usp0007pfw M6.8 78 km E of Hengchun, Taiwan：0 站
+usp0008amu M5.2 32 km NE of Hualien City, Taiwan：0 站
+usp0008rnv M5.7 31 km ESE of Pizitou, Taiwan：0 站
+usp0008s41 M6.1 89 km N of Basco, Philippines：0 站
+usp0009eq0 M7.7 21 km S of Puli, Taiwan：414 站
+usp0009eq2 M6.1 31 km SE of Puli, Taiwan：0 站
+usp0009eq5 M6.3 54 km SW of Hualien City, Taiwan：0 站
+usp0009eq6 M6.1 33 km SE of Puli, Taiwan：0 站
+usp0009eq7 M6.2 36 km SE of Puli, Taiwan：0 站
+usp0009erf M6.4 44 km SSE of Lugu, Taiwan：0 站
+usp0009euk M6.4 33 km SE of Puli, Taiwan：0 站
+usp0009eup M5.8 39 km SSE of Puli, Taiwan：0 站
+usp0009f1e M6.5 31 km SE of Puli, Taiwan：0 站
+usp0009gd0 M5.9 7 km SE of Pizitou, Taiwan：0 站
+usp0009gd5 M5.6 8 km SE of Pizitou, Taiwan：0 站
+usp0009gyc M6.3 66 km S of Hualien City, Taiwan：0 站
 usp0009t2k M5.4 29 km NNE of Puli, Taiwan：0 站
 usp0009ucq M6.4 29 km ESE of Puli, Taiwan：0 站
 usp0009xbp M5.7 Taiwan：0 站
@@ -67,6 +114,7 @@ us20007ccf M5.8 99 km NE of Hengchun, Taiwan：1 站
 us10007c5s M5.3 71 km SW of Yonakuni, Japan：0 站
 us20008izc M5.3 18 km S of Tainan, Taiwan：4 站
 us1000cfn6 M6.1 22 km NNE of Hualien City, Taiwan：83 站
+us1000cfns M4.9 23 km NE of Hualien City, Taiwan：4 站
 us1000cfnf M5.5 23 km NE of Hualien City, Taiwan：0 站
 us1000chhc M6.4 18 km NNE of Hualien City, Taiwan：1 站
 us1000ci9y M5.7 17 km NE of Hualien City, Taiwan：1 站

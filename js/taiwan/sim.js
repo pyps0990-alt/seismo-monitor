@@ -92,10 +92,12 @@ export class TaiwanEEW {
 
   start() {
     if (!this.homeTown) return;
+    // 第一次按「發生地震」時請求系統通知權限（瀏覽器規定必須由使用者操作觸發）
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
     const q = this.readQuake();
     const t0 = Date.now() + 1500;
     this.sc = createScenario(q, t0);
-    Object.assign(this, { sol: null, report: 0, lastN: 0, lastUsed: 0, lastReportN: 0, rejected: null, lastSpeech: 0, lastCalc: 0, firstIssued: null, firstNotice: null, prelim: null, cancelled: 0, maxLand: null, localPick: null, reveal: false,
+    Object.assign(this, { sol: null, report: 0, lastN: 0, lastUsed: 0, lastReportN: 0, rejected: null, lastSpeech: 0, lastCalc: 0, firstIssued: null, firstNotice: null, prelim: null, cancelled: 0, maxLand: null, region: null, homeAlerted: null, homeInRegion: false, localPick: null, reveal: false,
       townInts: null, lastTick: null, arrived: false, level: null });
 
     // 本站（我的位置）收到的地震波 → 送進模擬器
@@ -171,10 +173,10 @@ export class TaiwanEEW {
       } else if (!sol && this.report === 0) {
         // ---- 範圍通知：一偵測到 P 波就用最近 5 秒內的觸發先估震央（尚未確認）----
         const window5 = picks.filter(p => now - p.tp < 5000);
-        // 只用彼此吻合的觸發（有鄰站確認的群組）；還沒有群組時只用最早那一站（發出這次通知的站），
-        // 避免後來遠處的單站雜訊把初估震央拉走
+        // 只用彼此吻合的觸發（有鄰站確認的群組）；還沒有群組時只用 P 波振幅最大的一站：
+        // 真地震在震央附近振幅可達數十 gal，雜訊一般只有幾 gal，比「最早觸發」更不容易被雜訊騙
         const grp = associate(window5);
-        const recent = grp.length >= 2 ? grp : window5.slice(0, 1);
+        const recent = grp.length >= 2 ? grp : [window5.reduce((a, b) => (b.pAmp > a.pAmp ? b : a))];
         if (recent.length) {
           const near = idle.map(s => [distKm(s.lon, s.lat, recent[0].lon, recent[0].lat), s]).filter(([d]) => d < 150)
             .sort((a, b) => a[0] - b[0]).slice(0, 40).map(([, s]) => s);
@@ -195,7 +197,8 @@ export class TaiwanEEW {
     if (this.sol && !this.reveal && this.level === 'normal' && this.isEmergency()) this.announce(now, null, true);
 
     if (!this.reveal && now - sc.q.t0 > END_MS) { this.reveal = true; $('twStart').disabled = false; document.body.classList.remove('quake-on'); }
-    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.townInts, picked, stationInts, rejected: this.rejected,
+    // 範圍通知階段：地圖只畫正方形警示區域（尚未確認，不逐鄉鎮上色）；正式速報後才逐鄉鎮上色
+    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.sol?.prelim ? null : this.townInts, region: this.region, picked, stationInts, rejected: this.rejected,
       home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, reveal: this.reveal, pickPoint: this.reveal ? this.readQuake() : null });
     this.render(now, n);
     if (this.reveal && now - sc.q.t0 > END_MS + 60000) { this.sc = null; this.renderIdle(); }
@@ -216,23 +219,91 @@ export class TaiwanEEW {
     this.map.flyTo(so.lon + (120.95 - so.lon) * k, so.lat + (23.65 - so.lat) * k, z);
   }
 
-  // 套用一個震源解：計算各鄉鎮預估震度與陸地最大震度
+  // 套用一個震源解：計算各鄉鎮預估震度與陸地最大震度，以及區域警示範圍
   setForecast(sol, now, calcMs) {
     this.sol = sol; sol.calcMs = calcMs; sol.issued = now;
     this.townInts = TOWNS.map(tw => predictAt(sol.M, hypo(tw.c[0], tw.c[1], sol), tw, sol.depth).n);
     let mi = 0; this.townInts.forEach((v, i) => { if (intensityIndex(v) > intensityIndex(this.townInts[mi])) mi = i; });
     this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
+    this.region = this.computeRegion(sol);
+    this.checkHomeAlert(now);
+  }
+
+  // ---- 區域警示（正方形區塊）----
+  // 全台切成 0.1°×0.1°（約 10 km）的正方形區塊，只保留中心在陸地上的格子，每格帶有所在鄉鎮的場址條件。
+  // 測站越少，震央與規模越不確定，所以每格用「最壞情況」保守估計：
+  //   震央可能偏差 u 公里 → 格子到震央的距離先減去 u（假設震央其實更靠近它）
+  //   規模可能偏差 σ     → 用 M + σ 計算
+  // 保守估計達警示門檻（≥ 4 級）的格子就是警示區；都沒有時改用 3 級門檻。
+  static CELL = 0.1;
+  buildCells() {
+    const C = TaiwanEEW.CELL, cells = [];
+    for (let lat = 21.85; lat < 25.4; lat += C) for (let lon = 119.25; lon < 122.1; lon += C) {
+      const cLon = +lon.toFixed(3), cLat = +lat.toFixed(3);
+      // 中心在陸地 → 該鄉鎮；中心在海上但靠岸（7 km 內有鄉鎮中心）→ 歸給最近的鄉鎮，避免沿海鄉鎮漏格
+      let town = townAt(cLon, cLat);
+      if (!town) {
+        let best = null;
+        for (const t of TOWNS) { const d = distKm(cLon, cLat, t.c[0], t.c[1]); if (d < 7 && (!best || d < best.d)) best = { t, d }; }
+        town = best?.t;
+      }
+      if (town) cells.push({ lon: cLon, lat: cLat, town });
+    }
+    return cells;
+  }
+  cellOf(lon, lat) {
+    const C = TaiwanEEW.CELL;
+    return this.cells.find(c => Math.abs(c.lon - lon) <= C / 2 && Math.abs(c.lat - lat) <= C / 2) || null;
+  }
+
+  computeRegion(sol) {
+    this.cells ??= this.buildCells();
+    const n = sol.n;
+    const u = sol.prelim ? (n <= 1 ? 25 : n === 2 ? 15 : 10) : (n < 6 ? 5 : 3);           // 震央不確定度（km）
+    const sigM = sol.prelim ? (n <= 1 ? 0.8 : 0.5) : (n < 6 ? 0.3 : 0.15);                 // 規模不確定度
+    const lv = this.cells.map(c => {
+      const epi = Math.max(0, distKm(c.lon, c.lat, sol.lon, sol.lat) - u);
+      return predictAt(sol.M + sigM, Math.hypot(epi, sol.depth), c.town, sol.depth).n;
+    });
+    // 你所在位置也用同樣的保守估計（不受格子邊界影響）
+    const he = this.home;
+    const homeLv = he && predictAt(sol.M + sigM, Math.hypot(Math.max(0, distKm(he.lon, he.lat, sol.lon, sol.lat) - u), sol.depth), he.site, sol.depth).n;
+    let thr = '4';
+    let hit = this.cells.map((c, i) => ({ ...c, n: lv[i] })).filter(c => intensityIndex(c.n) >= intensityIndex(thr));
+    if (!hit.length) { thr = '3'; hit = this.cells.map((c, i) => ({ ...c, n: lv[i] })).filter(c => intensityIndex(c.n) >= intensityIndex(thr)); }
+    if (!hit.length) return null;
+    const cellKm2 = (TaiwanEEW.CELL * 111.32 * Math.cos(23.7 * Math.PI / 180)) * (TaiwanEEW.CELL * 110.57);
+    const mine = he && this.cellOf(he.lon, he.lat);
+    const homeInside = !!he && (intensityIndex(homeLv) >= intensityIndex(thr) || !!(mine && hit.some(c => c.lon === mine.lon && c.lat === mine.lat)));
+    return { cells: hit, size: TaiwanEEW.CELL, thr, u, sigM, prelim: !!sol.prelim, areaKm2: hit.length * cellKm2, homeInside };
+  }
+
+  // 你的位置在警示區內 → 發送通知（每次地震只發一次）
+  checkHomeAlert(now) {
+    const r = this.region, h = this.home;
+    this.homeInRegion = !!r?.homeInside;
+    if (!r || this.homeAlerted || !h || !r.homeInside) return;
+    this.homeAlerted = now;
+    const hp = this.homePred(this.sol), sec = Math.ceil((hp.ts - now) / 1000);
+    const body = `${h.name}位於警示區域內，預估 ${hp.n} 級${sec > 0 ? `，約 ${sec} 秒後抵達` : ''}`;
+    try {
+      if ('Notification' in window && Notification.permission === 'granted')
+        new Notification('地震區域警示', { body, tag: 'seismo-eew', requireInteraction: true, renotify: true });
+    } catch { /* 部分瀏覽器（如 iOS Safari 分頁）不支援 */ }
+    navigator.vibrate?.([400, 150, 400, 150, 800]);
+    this.homeInRegion = true;
   }
 
   announcePrelim(now) {
     this.firstNotice = now;
-    this.sound.localP();
+    const d = this.sound.regionAlert(this.homeInRegion);
     const where = describeEpicenter(this.sol.lon, this.sol.lat).where.replace('位於', '');
-    this.say(`偵測到P波，${where}附近，請注意搖晃`, 0.5);
+    this.say(this.homeInRegion ? `區域警示，你所在的地區可能有強烈搖晃，請注意` : `偵測到P波，${where}附近`, d);
   }
 
   cancelPrelim(now) {
     this.prelim = null; this.sol = null; this.townInts = null; this.maxLand = null; this.lastTick = null;
+    this.region = null; this.homeAlerted = null; this.homeInRegion = false; this.firstNotice = null;
     this.cancelled = (this.cancelled || 0) + 1;
     $('eewBanner').hidden = true;
     $('eewCard').className = 'eew-card idle waiting';
@@ -307,6 +378,7 @@ export class TaiwanEEW {
           <span class="k">${h.name}</span>
           <div class="eew-sec ${left <= 0 ? 'arrived' : ''}">${cdText}</div>
           <div class="eew-place">${advice}</div>
+          ${this.region ? `<div class="eew-zone ${this.homeInRegion ? 'in' : ''}">${this.homeInRegion ? '● 你在警示區域內' : '○ 你不在警示區域內'}</div>` : ''}
         </div>
       </div>
       <div class="eew-facts">
@@ -317,7 +389,7 @@ export class TaiwanEEW {
       <div class="eew-epi">${prelim ? '初估震央' : '震央'}：${epi.where.replace('位於', '')}（${epi.text}）<br>最大震度地區：${ml.town.county}${ml.town.name}</div>
       <div class="eew-meta">
         ${this.firstNotice ? `發震後 ${((this.firstNotice - t0) / 1000).toFixed(1)} 秒範圍通知 · ` : ''}${this.firstIssued ? `${((this.firstIssued - t0) / 1000).toFixed(1)} 秒正式速報 · ` : ''}預警 ${lead > 0 ? lead.toFixed(1) + ' 秒' : '無'} ·
-        <span class="q ${so.n < 4 ? '' : 'ok'}">${so.n} 站</span>${so.rejected.length ? ` · 排除 ${so.rejected.length} 個誤觸發` : ''} · 本站${this.localPick ? '已偵測 P 波' : '未偵測'}
+        ${this.region ? `警示區 ${this.region.cells.length} 個區塊、約 ${Math.round(this.region.areaKm2 / 100) * 100} km²（≥${this.region.thr} 級，保守計入震央誤差 ±${this.region.u} km、規模 +${this.region.sigM}）· ` : ''}<span class="q ${so.n < 4 ? '' : 'ok'}">${so.n} 站</span>${so.rejected.length ? ` · 排除 ${so.rejected.length} 個誤觸發` : ''} · 本站${this.localPick ? '已偵測 P 波' : '未偵測'}
       </div>
       ${this.reveal ? this.truthHtml() : ''}`;
     this.renderBanner(kind, title, h, hp, left, sec);

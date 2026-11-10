@@ -212,6 +212,8 @@ canvas.wave { width: 100%; display: block; border-radius: 10px; background: var(
 .eew-sec small { font-family: var(--sans); font-size: .9rem; color: var(--mut); margin-left: 4px; font-weight: 400; }
 .eew-sec.arrived { font-size: 1.6rem; color: var(--danger); }
 .eew-place { font-size: .82rem; color: var(--fg2); margin-top: 2px; }
+.eew-zone { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 6px; font-size: .75rem; color: var(--mut); background: rgba(255,255,255,.06); }
+.eew-zone.in { color: #fff; background: #b45309; font-weight: 700; }
 /* 第二層：地震概況 */
 .eew-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 10px; padding-top: 12px; border-top: 1px solid var(--line); }
 .eew-facts b { display: block; font-family: var(--mono); font-size: 1.15rem; }

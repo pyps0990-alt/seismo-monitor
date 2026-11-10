@@ -142,36 +142,10 @@ export class TaiwanMap {
         ctx.fillStyle = fill; ctx.fill();
         ctx.strokeStyle = stroke; ctx.lineWidth = 2; ctx.stroke();
       };
-      // 震度同心圓：以推算震央為圓心，各級震度的範圍畫成一圈一圈的色環，
-      // 只顯示 S 波已經掃過的部分 → 隨 S 波往外擴散
-      const rs2 = (VS * el) ** 2 - so0.depth ** 2;
-      const rsKm = rs2 > 0 ? Math.sqrt(rs2) : 0;
-      if (st.bands && rsKm > 0) {
-        for (const b of st.bands) {
-          if (b.r0 >= rsKm) continue;
-          const ro = Math.min(b.r1, rsKm) * this.kmPx, ri = b.r0 * this.kmPx;
-          if (ro > w * 3) continue;
-          const col = INTENSITY_COLORS[b.n];
-          ctx.beginPath(); ctx.arc(ex, ey, ro, 0, Math.PI * 2); if (ri > 0) ctx.arc(ex, ey, ri, 0, Math.PI * 2, true);
-          ctx.globalAlpha = 0.3; ctx.fillStyle = col; ctx.fill();
-          ctx.globalAlpha = 1;
-          if (b.r1 <= rsKm) {   // 這一級的外緣已經完整出現 → 畫邊界線與級數標籤
-            ctx.beginPath(); ctx.arc(ex, ey, ro, 0, Math.PI * 2); ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke();
-            const lx = ex + ro * Math.SQRT1_2, ly = ey - ro * Math.SQRT1_2, label = shortInt(b.n);
-            ctx.fillStyle = col; ctx.beginPath(); ctx.roundRect(lx - 11, ly - 8, 22, 16, 4); ctx.fill();
-            ctx.fillStyle = '#0b0e13'; ctx.font = 'bold 11px "JetBrains Mono", monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillText(label, lx, ly + 0.5); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-          }
-        }
-      }
       // P 波黃色；S 波：強震即時訊息＝紅色、一般地震速報＝橘色、範圍通知（未確認）＝灰白
       const sCol = st.level === 'emergency' ? '239,68,68' : st.level === 'normal' ? '249,115,22' : '203,213,225';
-      ring(VP, 'rgba(250,204,21,.95)', 'rgba(250,204,21,.07)');
-      ring(VS, `rgba(${sCol},1)`, st.bands ? 'rgba(0,0,0,0)' : `rgba(${sCol},.14)`);
-      if (st.level === 'emergency' && rsKm > 0) {   // 強震：S 波前緣加粗發光
-        ctx.beginPath(); ctx.arc(ex, ey, rsKm * this.kmPx, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(239,68,68,.35)'; ctx.lineWidth = 7; ctx.stroke();
-      }
+      ring(VP, 'rgba(250,204,21,.95)', 'rgba(250,204,21,.10)');
+      ring(VS, `rgba(${sCol},.95)`, `rgba(${sCol},.16)`);
     }
     if (sc && st.reveal) {
       const [ex, ey] = P(sc.q.lon, sc.q.lat);
@@ -182,8 +156,8 @@ export class TaiwanMap {
       }
     }
 
-    // 區域警示：固定 5 km × 5 km 正方形，持續閃爍（約每 0.8 秒一次）。
-    // 範圍通知階段為黃色；正式速報後依保守估計震度著色
+    // P 波偵測區塊：固定 10 km × 10 km 正方形，只亮在已偵測到 P 波的區域，持續閃爍（約每 0.8 秒一次）。
+    // 範圍通知階段為黃色；正式速報後依該區塊的預估震度著色
     const rg = st.region;
     if (rg) {
       const on = (Math.sin(st.now / 130) + 1) / 2;              // 0～1 循環

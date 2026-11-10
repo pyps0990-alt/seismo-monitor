@@ -1,6 +1,6 @@
 // 台灣地震速報模擬：自訂／預設地震 → 測站觸發 → 本機定位 → 發布速報（一般／緊急）→ 鄉鎮震度預測與倒數
 import { STATIONS, TOWNS, loadTowns, townAt, describeEpicenter, distKm } from './geo.js';
-import { createScenario, locate, locateRobust, noticeCandidates, NOTICE, triggerOf, predictAt, predictIntensity, loadModel, MODEL, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
+import { createScenario, locate, locateRobust, noticeCandidates, NOTICE, triggerOf, predictAt, loadModel, MODEL, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
 import { siteOf, siteClass } from './site.js';
 import { INTENSITY_COLORS, intensity, intensityIndex } from '../detector.js';
 import { TaiwanMap, shortInt } from './map.js';
@@ -141,7 +141,7 @@ export class TaiwanEEW {
 
     $('twStart').disabled = true;
     document.body.classList.add('quake-on');
-    document.body.classList.remove('eew-emergency'); $('eewOverlay').hidden = true;
+    document.body.classList.remove('eew-emergency');
     this.map.userMoved = false; // 新地震重新開始自動追蹤
     $('eewCard').className = 'eew-card idle waiting';
     $('eewCard').innerHTML = `<div class="ttl">${this.real ? `回放：${this.real.name}` : '監測中…'}</div><p>等待測站偵測 P 波</p>`;
@@ -236,12 +236,15 @@ export class TaiwanEEW {
 
     if (!this.reveal && now - sc.q.t0 > END_MS) { this.reveal = true; $('twStart').disabled = false; document.body.classList.remove('quake-on'); }
     // 範圍通知階段：地圖只畫正方形警示區域（尚未確認，不逐鄉鎮上色）；正式速報後才逐鄉鎮上色
-    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.sol?.prelim || !this.reveal ? null : this.townInts, region: this.sol?.prelim ? this.region : null, picked,   // 方框只在正式速報前顯示；之後改用震度同心圓 stationInts, rejected: this.rejected,
+    // 鄉鎮震度上色：正式速報後才上色（範圍通知階段未確認，不上色）
+    // 區塊方框：只亮在「已偵測到 P 波」的區域（見 pBlocks），對這些區塊做預警
+    this.pRegion = this.reveal ? null : this.pBlocks(picks);
+    this.map.draw({ mode: this.mode, scenario: sc, now, solution: this.sol, townInts: this.sol?.prelim ? null : this.townInts,
+      region: this.pRegion, picked, stationInts, rejected: this.rejected,
       realStations: this.reveal && this.real ? this.real.stations : null,
-      bands: this.sol && !this.sol.prelim && !this.reveal ? this.bands : null, level: this.sol?.prelim ? null : this.level,
+      level: this.sol?.prelim ? null : this.level,
       home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, reveal: this.reveal, pickPoint: this.reveal ? this.readQuake() : null });
     this.render(now, n);
-    this.renderOverlay(now);
     if (this.reveal) document.body.classList.remove('eew-emergency');
     if (this.reveal && now - sc.q.t0 > END_MS + 60000) { this.sc = null; this.renderIdle(); }
   }
@@ -295,15 +298,28 @@ export class TaiwanEEW {
     this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
     this.region = this.computeRegion(sol);
     this.checkHomeAlert(now);
-    // 震度同心圓：每 2 km 算一次預估震度（不含各地地盤差異），整理成 [內徑, 外徑, 震度] 的環
-    this.bands = [];
-    if (!sol.prelim) {
-      let cur = null;
-      for (let r = 0; r <= 600; r += 2) {
-        const n = predictIntensity(sol.M, Math.hypot(r, sol.depth), sol.depth);
-        if (!cur || n !== cur.n) { if (cur) cur.r1 = r; cur = { n, r0: r, r1: 600 }; if (n !== '0') this.bands.push(cur); else break; }
+  }
+
+  // ---- P 波偵測區塊（地圖上的方框）----
+  // 只有「測站已經偵測到 P 波」的地方才亮框：以觸發測站為中心，10 km 內的區塊亮起，
+  // 顏色＝該區塊的預估震度（範圍通知階段未確認，一律黃色），對這些區塊做區塊預警。
+  // 觸發要和目前的震源解吻合（P 波到時殘差 ≤ 1.5 秒）才算，誤觸發不會亮框。
+  pBlocks(picks) {
+    const so = this.sol;
+    if (!so || !this.cells || !this.cellLv) return null;
+    const keys = new Set();
+    for (const p of picks) {
+      const tt = (Math.hypot(distKm(p.lon, p.lat, so.lon, so.lat), so.depth) / VP) * 1000;
+      if (Math.abs(p.tp - so.t0 - tt) > 1500) continue;            // 與這個地震不吻合 → 視為雜訊
+      const [ci, cj] = this.cellKey(p.lon, p.lat).split(',').map(Number);
+      for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+        const k = `${ci + di},${cj + dj}`, c = this.cells.get(k);
+        if (c && distKm(c.lon, c.lat, p.lon, p.lat) <= TaiwanEEW.SIDE_KM) keys.add(k);
       }
     }
+    const hx = TaiwanEEW.DLON / 2, hy = TaiwanEEW.DLAT / 2;
+    const blocks = [...keys].map(k => { const c = this.cells.get(k); return { lon: c.lon, lat: c.lat, hx, hy, n: this.cellLv.get(k) ?? '0' }; });
+    return blocks.length ? { blocks, prelim: !!so.prelim } : null;
   }
 
   // ---- 區域警示（正方形區塊）----
@@ -362,6 +378,7 @@ export class TaiwanEEW {
     };
     const lv = new Map();
     for (const [k, c] of this.cells) lv.set(k, this.plumMax(conservative(c.lon, c.lat, c.town), c.town));
+    this.cellLv = lv;   // 每格的保守預估震度（P 波區塊方框上色用）
     // 你所在位置也用同樣的保守估計（不受格子邊界影響）
     const he = this.home;
     const homeLv = he && conservative(he.lon, he.lat, he.site);
@@ -434,7 +451,6 @@ export class TaiwanEEW {
       // 強震即時訊息語音先講類別與行動；一般地震速報只報震度與秒數
       this.say(emergency ? `強震即時訊息，${this.phrase(hp.n, sec)}，請立即避難` : `地震速報，${this.phrase(hp.n, sec)}`, d);
       document.body.classList.toggle('eew-emergency', emergency);
-      if (emergency) this.showOverlay(now);
     } else {
       this.sound.update();
       if (prevInt && prevInt !== hp.n && sec > 2) this.say(this.phrase(hp.n, sec), 0.2);
@@ -529,33 +545,6 @@ export class TaiwanEEW {
       <span class="lv" style="background:${INTENSITY_COLORS[r.n]}">${shortInt(r.n)}</span>
       <span class="nm"><small>${r.t.county}</small>${r.t.name}</span>
       <span class="tm ${r.s > 0 ? '' : 'done'}">${r.s > 0 ? Math.ceil(r.s) + ' 秒' : '已抵達'}</span></div>`).join('');
-  }
-
-  // ---- 強震即時訊息：全螢幕警報畫面（約 10 秒後自動收起，點一下可提前關閉）----
-  showOverlay(now) {
-    const ov = $('eewOverlay');
-    this.overlayUntil = now + 10000;
-    ov.hidden = false;
-    ov.onclick = () => { this.overlayUntil = 0; ov.hidden = true; };
-    this.renderOverlay(now);
-  }
-  renderOverlay(now) {
-    const ov = $('eewOverlay');
-    if (ov.hidden) return;
-    if (!this.sol || this.reveal || now > this.overlayUntil) { ov.hidden = true; return; }
-    const h = this.home, hp = this.homePred(this.sol);
-    const left = (hp.ts - now) / 1000, sec = Math.ceil(left);
-    const epi = describeEpicenter(this.sol.lon, this.sol.lat).where.replace('位於', '');
-    ov.innerHTML = `<div class="ov-box">
-      <div class="ov-kind">強震即時訊息</div>
-      <div class="ov-sub">${epi}發生強烈地震 · 規模 M${this.sol.M.toFixed(1)}</div>
-      <div class="ov-main">
-        <div class="ov-lv" style="background:${INTENSITY_COLORS[hp.n]}"><b>${shortInt(hp.n)}</b><small>級</small></div>
-        <div class="ov-sec">${left > 0 ? `${sec}<small>秒</small>` : '搖晃中'}</div>
-      </div>
-      <div class="ov-info">${h.name}</div>
-      <div class="ov-act">立即避難：趴下、掩護、穩住</div>
-      <div class="ov-close">點一下關閉</div></div>`;
   }
 
   // 全站橫幅：任何頁面都顯示「通知類型｜我這裡幾級｜幾秒」，點一下回到速報頁

@@ -164,8 +164,10 @@ const tw = new TaiwanEEW({
     source.injectQuake(params);
   },
 });
-$('twLegend').innerHTML = INTENSITY_NAMES.slice(1).reverse()
-  .map(n => `<div><i style="background:${INTENSITY_COLORS[n]}"></i>${n}</div>`).join('');
+$('twLegend').innerHTML = INTENSITY_NAMES.slice(1)
+  .map(n => `<i style="background:${INTENSITY_COLORS[n]}">${n.replace('弱', '-').replace('強', '+')}</i>`).join('');
+// 全站速報橫幅：點一下回到速報頁
+$('eewBanner').onclick = () => document.querySelector('.nav-btn[data-page="eew"]').click();
 
 // ---- 繪圖迴圈 ----
 function frame() {

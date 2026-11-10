@@ -39,7 +39,7 @@ export class SimulatorSource {
   }
 
   sample(t) {
-    const n = () => (Math.random() + Math.random() + Math.random() - 1.5) * 0.004; // 約 0.2 gal 雜訊
+    const n = () => (Math.random() + Math.random() + Math.random() - 1.5) * 0.0012; // 約 0.06 gal 雜訊（接近 ICM-42688-P 規格）
     let x = n() + 0.02, y = n() - 0.01, z = n() + G;
     for (const q of this.quakes) {
       const s = (t - q.t0) / 1000;

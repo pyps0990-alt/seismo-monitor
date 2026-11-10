@@ -298,7 +298,7 @@ td a { color: var(--accent); text-decoration: none; }
   .eew-lv b { font-size: 2.2rem; }
   .eew-sec { font-size: 2.6rem; }
   .town-list { max-height: none; }
-  .tip { display: none !important; }
+  .tip { width: 200px; font-size: .72rem; }   /* 手機：點鄉鎮顯示，字小一點 */
 
   .two { grid-template-columns: 1fr; }
 }

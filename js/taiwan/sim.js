@@ -21,7 +21,8 @@ export class TaiwanEEW {
     this.onQuake = onQuake; this.sound = sound;
     this.sc = null; this.mode = 'intensity'; this.hoverTown = null;
     this.map = new TaiwanMap($('twMap'), {
-      onClick: p => { if (!this.sc || this.reveal) this.setEpicenter(p); },
+      // 待命時點地圖＝設定震央；地震進行中點地圖＝顯示該鄉鎮的即時資訊（手機沒有滑鼠移過去的功能）
+      onClick: (p, e) => { if (!this.sc || this.reveal) this.setEpicenter(p); else if (p && e) this.onHover(p, e); },
       onHover: (p, e) => this.onHover(p, e),
     });
     $('zIn').onclick = () => this.map.zoomBy(1.5);
@@ -246,6 +247,7 @@ export class TaiwanEEW {
       level: this.sol?.prelim ? null : this.level,
       home: this.home, homeTown: this.homeIdx, hoverTown: this.hoverTown, reveal: this.reveal, pickPoint: this.reveal ? this.readQuake() : null });
     this.render(now, n);
+    this.updateTip(now);   // 滑鼠停著不動時，資訊框也跟著震度更新
     if (this.reveal) document.body.classList.remove('eew-emergency');
     if (this.reveal && now - sc.q.t0 > END_MS + 60000) { this.sc = null; this.renderIdle(); }
   }
@@ -354,6 +356,22 @@ export class TaiwanEEW {
     }
     return cells;
   }
+  // 每個區塊和哪些鄉鎮重疊：區塊內取 49 個取樣點（7×7，約每 3.5 km 一點）判斷所在鄉鎮，再加上中心點落在區塊內的鄉鎮
+  // （大鄉鎮如秀林鄉會橫跨好幾個區塊，每個區塊都要算到它）
+  buildCellTowns() {
+    const m = new Map(), idx = new Map(TOWNS.map((t, i) => [t, i]));
+    const hx = TaiwanEEW.DLON / 2, hy = TaiwanEEW.DLAT / 2;
+    for (const [k, c] of this.cells) {
+      const set = new Set();
+      for (let a = -3; a <= 3; a++) for (let b = -3; b <= 3; b++) { const t = townAt(c.lon + (a / 3.2) * hx, c.lat + (b / 3.2) * hy); if (t) set.add(idx.get(t)); }
+      m.set(k, set);
+    }
+    TOWNS.forEach((t, i) => { const k = this.cellKey(t.c[0], t.c[1]); if (m.has(k)) m.get(k).add(i); });
+    // 反查：每個鄉鎮屬於哪些區塊（資訊框用）
+    this.townCells = new Map();
+    for (const [k, set] of m) for (const i of set) { if (!this.townCells.has(i)) this.townCells.set(i, []); this.townCells.get(i).push(k); }
+    return m;
+  }
   cellKey(lon, lat) {
     const [ox, oy] = TaiwanEEW.O;
     return `${Math.floor((lon - ox) / TaiwanEEW.DLON)},${Math.floor((lat - oy) / TaiwanEEW.DLAT)}`;
@@ -381,7 +399,16 @@ export class TaiwanEEW {
     };
     const lv = new Map();
     for (const [k, c] of this.cells) lv.set(k, this.plumMax(conservative(c.lon, c.lat, c.town), c.town));
-    this.cellLv = lv;   // 每格的保守預估震度（P 波區塊方框上色用）
+    // 畫面上 P 波區塊的震度：用「最佳估計」（和鄉鎮上色、清單、資訊框同一套算法），避免同一地點顯示兩種震度；
+    // 保守估計（lv）只在後台用來判斷「你是否在警示區內」
+    // 一個 25 km 區塊會涵蓋好幾個鄉鎮 → 區塊震度＝區塊內各鄉鎮（中心點落在區塊內者）預估震度的最大值
+    this.cellTowns ??= this.buildCellTowns();
+    this.cellLv = new Map();
+    for (const [k, c] of this.cells) {
+      let best = this.plumMax(predictAt(sol.M, sourceDist(c.lon, c.lat, sol), c.town, sol.depth).n, c.town);
+      for (const ti of this.cellTowns.get(k) ?? new Set()) { const v = this.townInts?.[ti]; if (v && intensityIndex(v) > intensityIndex(best)) best = v; }
+      this.cellLv.set(k, best);
+    }
     // 你所在位置也用同樣的保守估計（不受格子邊界影響）
     const he = this.home;
     const homeLv = he && conservative(he.lon, he.lat, he.site);
@@ -608,17 +635,35 @@ export class TaiwanEEW {
     const tip = $('twTip');
     const t = p && townAt(p.lon, p.lat);
     this.hoverTown = t ? TOWNS.indexOf(t) : null;
-    if (!t) { tip.hidden = true; return; }
-    const sc = siteClass(t.vs30);
-    let pred = '';
-    if (this.sol && this.townInts) {
-      const r = predictAt(this.sol.M, sourceDist(t.c[0], t.c[1], this.sol), t, this.sol.depth);
-      pred = `<div>預估震度 ${badge(r.n)} PGA ${r.pga.toFixed(0)} gal · PGV ${r.pgv.toFixed(1)} cm/s</div>`;
-    }
-    tip.innerHTML = `<b>${t.county} ${t.name}</b><div>Vs30 ≈ ${t.vs30} m/s · ${sc.name}</div><div>地盤放大 PGA ×${t.ampA.toFixed(2)}、PGV ×${t.ampV.toFixed(2)}</div>${pred}`;
+    if (!t) { tip.hidden = true; this.hoverPos = null; return; }
     const wrap = $('twMap').parentElement.getBoundingClientRect();
-    tip.style.left = Math.min(e.clientX - wrap.left + 14, wrap.width - 230) + 'px';
-    tip.style.top = (e.clientY - wrap.top + 14) + 'px';
+    this.hoverPos = { x: Math.min(e.clientX - wrap.left + 14, wrap.width - 230), y: e.clientY - wrap.top + 14, lon: p.lon, lat: p.lat };
+    this.lastTip = 0;
+    this.updateTip(Date.now(), true);
+  }
+
+  // 資訊框：使用和地圖完全相同的數值（鄉鎮預估含 PLUM、P 波區塊的震度），並在滑鼠不動時也持續更新
+  updateTip(now, force = false) {
+    const tip = $('twTip');
+    if (this.hoverTown == null || !this.hoverPos) return;
+    if (!force && now - (this.lastTip ?? 0) < 300) return;
+    this.lastTip = now;
+    const i = this.hoverTown, t = TOWNS[i], sc = siteClass(t.vs30);
+    let pred = '';
+    if (this.sol && this.townInts && !this.sol.prelim) {
+      const src = predictAt(this.sol.M, sourceDist(t.c[0], t.c[1], this.sol), t, this.sol.depth);
+      const n = this.townInts[i];                                  // 地圖上顯示的同一個值
+      const plumUp = intensityIndex(n) > intensityIndex(src.n);
+      const s = (this.sol.t0 + (hypo(t.c[0], t.c[1], this.sol) / VS) * 1000 - now) / 1000;
+      pred = `<div>預估震度 ${badge(n)}${plumUp ? '（附近測站實測上修）' : ''} · ${s > 0 ? `${Math.ceil(s)} 秒後抵達` : '已抵達'}</div>
+        <div>震源模型：PGA ${src.pga.toFixed(0)} gal · PGV ${src.pgv.toFixed(1)} cm/s</div>`;
+    } else if (this.sol?.prelim) pred = '<div>範圍通知階段：震度待正式速報後公布</div>';
+    // 滑鼠所在位置的 P 波區塊
+    const blk = this.pRegion?.blocks.find(b => Math.abs(b.lon - this.hoverPos.lon) <= b.hx && Math.abs(b.lat - this.hoverPos.lat) <= b.hy);
+    const blkHtml = blk ? `<div>P 波區塊：已偵測到 P 波${this.sol?.prelim ? '' : `，區塊內最大 ${badge(blk.n)}`}</div>` : '';
+    tip.innerHTML = `<b>${t.county} ${t.name}</b>${pred}${blkHtml}<div class="muted">Vs30 ≈ ${t.vs30} m/s · ${sc.name} · 放大 ×${t.ampA.toFixed(2)}</div>`;
+    tip.style.left = this.hoverPos.x + 'px';
+    tip.style.top = this.hoverPos.y + 'px';
     tip.hidden = false;
   }
 }

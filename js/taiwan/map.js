@@ -27,7 +27,7 @@ export class TaiwanMap {
       }
       onHover?.(this.toLonLat(e), e);
     });
-    canvas.addEventListener('pointerup', e => { if (drag && !drag.moved) onClick?.(this.toLonLat(e)); drag = null; canvas.style.cursor = ''; });
+    canvas.addEventListener('pointerup', e => { if (drag && !drag.moved) onClick?.(this.toLonLat(e), e); drag = null; canvas.style.cursor = ''; });
     canvas.addEventListener('pointerleave', () => onHover?.(null));
     canvas.addEventListener('dblclick', e => { const [x, y] = local(e); this.zoomAt(x, y, 2); });
   }

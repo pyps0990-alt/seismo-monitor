@@ -1,5 +1,7 @@
 node_modules/
 data/usgs/cache/
+data/cwa/cache/
+cwa-key.txt
 *.csv
 target/
 .DS_Store

@@ -157,9 +157,9 @@ export class TaiwanMap {
     // 區域警示：約 10 km 正方形區塊。範圍通知階段（未確認）為閃爍的黃框；正式速報後依保守震度著色的實框
     const rg = st.region;
     if (rg) {
-      const h = rg.size / 2;
       const pulse = 0.25 + 0.2 * Math.abs(Math.sin(st.now / 350));
-      for (const c of rg.cells) {
+      for (const c of rg.blocks) {
+        const h = c.size / 2;
         const [ax, ay] = P(c.lon - h, c.lat + h), [bx, by] = P(c.lon + h, c.lat - h);
         const col = rg.prelim ? '#facc15' : INTENSITY_COLORS[c.n];
         // 正式速報時底下已有鄉鎮震度色，區塊只畫外框避免太雜

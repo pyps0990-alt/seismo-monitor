@@ -15,7 +15,10 @@ const S = await import('../js/taiwan/site.js');
 const D = await import('../js/detector.js');
 await G.loadTowns('data/towns.json');
 
-const { records } = JSON.parse(fs.readFileSync('data/usgs/records.json', 'utf8'));
+// 資料來源：USGS ShakeMap（M5 以上為主）＋ 中央氣象署地震報告（含 M3～4 小地震，累積保存）
+const records = JSON.parse(fs.readFileSync('data/usgs/records.json', 'utf8')).records.map(r => ({ ...r, src: 'USGS' }));
+if (fs.existsSync('data/cwa/records.json')) records.push(...JSON.parse(fs.readFileSync('data/cwa/records.json', 'utf8')).records);
+const nSrc = s => records.filter(r => r.src === s).length;
 for (const r of records) {
   const s = S.siteOf(r.sLon, r.sLat);
   r.ampA = s.ampA; r.ampV = s.ampV;
@@ -47,7 +50,9 @@ function lstsq(X, y, w) {
   return x;
 }
 
-const feats = (r, h) => [1, r.M, Math.log10(r.rhypo + h), r.rhypo, r.depth];
+// 最後一項是「資料來源修正」：氣象署用計算震度專用的濾波值（IntScaleValue），USGS 用峰值，兩者有系統差。
+// 預測時一律加上這一項 → 輸出等同於氣象署震度標準
+const feats = (r, h) => [1, r.M, Math.log10(r.rhypo + h), r.rhypo, r.depth, r.src === 'CWA' ? 1 : 0];
 function fit(train, key, ampKey) {
   let best = null;
   for (const h of [0, 1, 3, 5, 8, 10, 15, 20, 30]) {   // h（近震源飽和項）用格點搜尋
@@ -59,7 +64,7 @@ function fit(train, key, ampKey) {
   }
   return best;
 }
-const pred = (m, r, amp) => 10 ** (m.c[0] + m.c[1] * r.M + m.c[2] * Math.log10(r.rhypo + m.h) + m.c[3] * r.rhypo + m.c[4] * r.depth) * amp;
+const pred = (m, r, amp) => 10 ** (m.c[0] + m.c[1] * r.M + m.c[2] * Math.log10(r.rhypo + m.h) + m.c[3] * r.rhypo + m.c[4] * r.depth + (r.src === 'CWA' ? m.c[5] : 0)) * amp;
 
 // ---- 鄉鎮場址修正：該鄉鎮測站平均殘差，並向 0 收縮（測站少就不太相信）----
 const K_SHRINK = 3;
@@ -124,13 +129,16 @@ const model = {
   trained: new Date().toISOString(),
   data: { events: evIds.length, records: records.length, validation: `依地震 ${FOLDS} 折交叉驗證` },
   form: 'log10(Y) = c0 + c1*M + c2*log10(R+h) + c3*R + c4*depth + log10(地形放大) + 鄉鎮修正',
-  pga: { c: round(mPGA.c), h: mPGA.h }, pgv: { c: round(mPGV.c), h: mPGV.h },
+  // 網頁端只用前 5 個係數；c0 已併入氣象署來源修正（c5），輸出即氣象署震度標準
+  pga: { c: round([mPGA.c[0] + mPGA.c[5], ...mPGA.c.slice(1, 5)]), h: mPGA.h, cwaOffset: +mPGA.c[5].toFixed(4) },
+  pgv: { c: round([mPGV.c[0] + mPGV.c[5], ...mPGV.c.slice(1, 5)]), h: mPGV.h, cwaOffset: +mPGV.c[5].toFixed(4) },
   siteDelta, test: res,
 };
 fs.writeFileSync('data/model.json', JSON.stringify(model));
 
 const pct = (a, b) => `${((1 - b / a) * 100).toFixed(0)}%`;
 const report = [
+  `資料來源：USGS ${nSrc('USGS')} 筆、中央氣象署 ${nSrc('CWA')} 筆；氣象署來源修正 PGA ${mPGA.c[5].toFixed(3)}、PGV ${mPGV.c[5].toFixed(3)}（log10）`,
   `訓練資料：${evIds.length} 個地震、${records.length} 筆測站紀錄；驗證方式：依地震 ${FOLDS} 折交叉驗證（每筆都在「沒看過該地震」的模型下預測）`,
   `PGA 係數：c=${round(mPGA.c).join(', ')}，h=${mPGA.h}`,
   `PGV 係數：c=${round(mPGV.c).join(', ')}，h=${mPGV.h}`,

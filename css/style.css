@@ -208,6 +208,9 @@ canvas.wave { width: 100%; display: block; border-radius: 10px; background: var(
 .eew-lv b { font-family: var(--mono); font-size: 2.6rem; line-height: 1; }
 .eew-lv small { font-size: .72rem; font-weight: 700; margin-top: -6px; }
 .eew-cd .k { display: block; }
+.eew-lv.zone { background: #374151; color: #e5e7eb; }
+.eew-lv.zone.in { background: #facc15; color: #0b0e13; animation: blink 1s infinite; }
+.eew-sec.out { font-size: 1.4rem; color: var(--fg2); }
 .eew-sec { font-family: var(--mono); font-size: 3rem; font-weight: 700; line-height: 1.05; }
 .eew-sec small { font-family: var(--sans); font-size: .9rem; color: var(--mut); margin-left: 4px; font-weight: 400; }
 .eew-sec.arrived { font-size: 1.6rem; color: var(--danger); }

@@ -81,11 +81,20 @@ export function createScenario(q, t0) {
     };
   });
   // 誤觸發：隨機 2～4 個測站在地震前後被雜訊（車輛、施工、儀器故障）觸發
+  // 振幅：85% 為一般雜訊 0.3～3 gal，15% 為儀器突波 3～20 gal（較難分辨）
+  const falseAmp = () => (Math.random() < 0.85 ? 0.3 + Math.random() * 2.7 : 3 + Math.random() * 17);
   const nFalse = 2 + Math.floor(Math.random() * 3);
   for (let k = 0; k < nFalse; k++) {
     const s = stations[Math.floor(Math.random() * stations.length)];
     const tf = t0 - 6000 + Math.random() * 20000;
-    if (tf < s.tp - 1500) { s.falseTp = tf; s.falseAmp = 0.3 + Math.random() * 3; }
+    if (tf < s.tp - 1500) { s.falseTp = tf; s.falseAmp = falseAmp(); }
+  }
+  // 20% 機率：相鄰兩站幾乎同時被同一個雜訊源觸發（例如大型車輛經過），最難排除的情況
+  if (Math.random() < 0.2) {
+    const a = stations[Math.floor(Math.random() * stations.length)];
+    const b = stations.filter(s => s !== a && distKm(s.lon, s.lat, a.lon, a.lat) < 15).sort(() => Math.random() - 0.5)[0];
+    const tf = t0 - 6000 + Math.random() * 20000;
+    if (b && tf < a.tp - 1500 && tf < b.tp - 1500) { a.falseTp = tf; a.falseAmp = falseAmp(); b.falseTp = tf + 300 + Math.random() * 500; b.falseAmp = falseAmp() * 0.6; }
   }
   return { q: { ...q, t0 }, stations };
 }
@@ -148,6 +157,24 @@ function searchGrid(picks, idle, now, lonR, latR, step, depths) {
     }
   }
   return best;
+}
+
+// ---- 範圍通知（P 波階段）的發送標準 ----
+// 單一測站觸發很容易是雜訊（車輛、施工、儀器故障），所以必須符合下列其一才發送：
+//   A. 雙站確認：30 km 內至少 2 站在合理時間差內觸發（associate 群組 ≥ 2），且群組最大 P 波振幅 ≥ 0.8 gal
+//   B. 單站強震：單站 P 波振幅 ≥ 8 gal（一般雜訊到不了這麼大，代表附近正在發生較大地震）
+// 另外初估規模 < 4.0 不發送（小地震不需要警示）。
+export const NOTICE = { GROUP_ANY: 3, PAIR_AMP: 3, SINGLE_AMP: Infinity, MIN_M: 4.0, WINDOW_MS: 5000 };
+export function noticeCandidates(picks, now, cfg = NOTICE) {
+  const win = picks.filter(p => now - p.tp < cfg.WINDOW_MS && !p.local);
+  if (!win.length) return null;
+  const grp = associate(win);
+  const maxAmp = grp.length ? Math.max(...grp.map(p => p.pAmp)) : 0;
+  if (grp.length >= cfg.GROUP_ANY) return { picks: grp, rule: `${grp.length} 站確認` };
+  if (grp.length >= 2 && maxAmp >= cfg.PAIR_AMP) return { picks: grp, rule: '雙站＋強振幅' };
+  const big = win.filter(p => p.pAmp >= cfg.SINGLE_AMP).sort((a, b) => b.pAmp - a.pAmp);
+  if (big.length) return { picks: [big[0]], rule: '單站強震' };
+  return null;
 }
 
 // 穩健定位：關聯 → 定位 → 剔除殘差 > 1 秒的觸發 → 再定位

@@ -20,9 +20,13 @@
 ## 用真實資料訓練地震動預估式
 
 ```bash
-node tools/fetch-usgs.mjs 5.0 2000   # 下載 USGS ShakeMap 台灣測站實測資料 → data/usgs/records.json
+node tools/fetch-usgs.mjs 4.0 1990   # 下載 USGS ShakeMap 台灣測站實測資料 → data/usgs/records.json
+node tools/fetch-cwa.mjs             # 下載中央氣象署地震報告各測站實測值（累積保存）→ data/cwa/records.json
 node tools/train-gmpe.mjs            # 迴歸校正 PGA/PGV 預估式＋鄉鎮場址修正 → data/model.json
 ```
+
+氣象署 API 只保留最近約一個半月的報告，`fetch-cwa.mjs` 會把每次下載的資料累積起來，定期執行資料就會越來越多。
+授權碼放在專案根目錄的 `cwa-key.txt`（已列入 `.gitignore`，不會上傳）。
 
 模型：`log10(Y) = c0 + c1·M + c2·log10(R+h) + c3·R + c4·深度 + 地形放大 + 鄉鎮修正`，
 以「依地震 5 折交叉驗證」評估（每筆紀錄都用沒看過該地震的模型預測），結果見 `data/model-report.txt`。

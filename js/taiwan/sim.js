@@ -1,6 +1,6 @@
 // 台灣地震速報模擬：自訂／預設地震 → 測站觸發 → 本機定位 → 發布速報（一般／緊急）→ 鄉鎮震度預測與倒數
-import { COUNTIES, STATIONS, TOWNS, loadTowns, townAt, describeEpicenter, distKm } from './geo.js';
-import { createScenario, locate, locateRobust, associate, triggerOf, predictAt, loadModel, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
+import { STATIONS, TOWNS, loadTowns, townAt, describeEpicenter, distKm } from './geo.js';
+import { createScenario, locate, locateRobust, noticeCandidates, NOTICE, triggerOf, predictAt, loadModel, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
 import { siteOf, siteClass } from './site.js';
 import { INTENSITY_COLORS, intensity, intensityIndex } from '../detector.js';
 import { TaiwanMap, shortInt } from './map.js';
@@ -150,6 +150,10 @@ export class TaiwanEEW {
       if (s.type === 'land' && intensityIndex(n) > intensityIndex(maxObs)) maxObs = n;
     }
     this.maxObs = maxObs;
+    // PLUM 用的陸上測站實測震度（只取已達 1 級以上）
+    this.obsInts = new Map();
+    for (const s of sc.stations) { const v = stationInts.get(s.name); if (v && v !== '0' && s.type === 'land') this.obsInts.set(s.name, v); }
+    if (this.sol && !this.reveal && now - (this.lastPlum ?? 0) > 1000) { this.lastPlum = now; if (this.lastCalc !== now) this.refreshForecast(now); }
 
     // 每有新觸發就做「關聯＋定位」；至少 3 站互相確認才發布第一報，之後 8 站內每站更新、再來每 3 站更新
     const n = picks.length;
@@ -172,21 +176,22 @@ export class TaiwanEEW {
         this.follow();
       } else if (!sol && this.report === 0) {
         // ---- 範圍通知：一偵測到 P 波就用最近 5 秒內的觸發先估震央（尚未確認）----
-        const window5 = picks.filter(p => now - p.tp < 5000);
-        // 只用彼此吻合的觸發（有鄰站確認的群組）；還沒有群組時只用 P 波振幅最大的一站：
-        // 真地震在震央附近振幅可達數十 gal，雜訊一般只有幾 gal，比「最早觸發」更不容易被雜訊騙
-        const grp = associate(window5);
-        const recent = grp.length >= 2 ? grp : [window5.reduce((a, b) => (b.pAmp > a.pAmp ? b : a))];
-        if (recent.length) {
+        // 發送標準（見 eew.js noticeCandidates）：3 站互相確認，或 2 站確認且 P 波振幅 ≥ 3 gal；初估規模 ≥ 4.0
+        // 400 次模擬：誤報率由「任一站觸發就通知」的 83.5% 降到 2.0%，沒有漏報
+        const cand = noticeCandidates(picks, now);
+        if (cand) {
+          const recent = cand.picks;
           const near = idle.map(s => [distKm(s.lon, s.lat, recent[0].lon, recent[0].lat), s]).filter(([d]) => d < 150)
             .sort((a, b) => a[0] - b[0]).slice(0, 40).map(([, s]) => s);
           const pv = locate(recent.slice(0, 3), near, now);
-          Object.assign(pv, { prelim: true, n: recent.length, used: recent, rejected: [] });
-          const first = !this.prelim;
-          if (first) this.prelim = { since: recent[0].tp };
-          this.setForecast(pv, now, performance.now() - t);
-          if (first) this.announcePrelim(now);
-          this.follow();
+          if (pv.M >= NOTICE.MIN_M) {
+            Object.assign(pv, { prelim: true, n: recent.length, used: recent, rejected: [], rule: cand.rule });
+            const first = !this.prelim;
+            if (first) this.prelim = { since: recent[0].tp };
+            this.setForecast(pv, now, performance.now() - t);
+            if (first) this.announcePrelim(now);
+            this.follow();
+          }
         }
       }
     }
@@ -219,10 +224,36 @@ export class TaiwanEEW {
     this.map.flyTo(so.lon + (120.95 - so.lon) * k, so.lat + (23.65 - so.lat) * k, z);
   }
 
+  // ---- PLUM（Propagation of Local Undamped Motion）----
+  // 日本氣象廳 2018 年起、美國 ShakeAlert 也採用的方法：不靠震源參數，直接把「附近測站已經實測到的震度」
+  // 當作該地即將遭遇的震度（30 km 內取最大值，不做距離衰減）。
+  // 優點：大地震（斷層破裂很長）、同時發生多個地震時，震源模型容易低估，PLUM 仍能正確預警。
+  // 最終預估 = max(震源模型預估, PLUM 預估)
+  static PLUM_KM = 30;
+  plumMax(n, town) {
+    if (!this.obsInts?.size) return n;
+    this.plumNb ??= new Map();
+    let nb = this.plumNb.get(town.id);
+    if (!nb) { nb = STATIONS.filter(s => s.type === 'land' && distKm(s.lon, s.lat, town.c[0], town.c[1]) <= TaiwanEEW.PLUM_KM).map(s => s.name); this.plumNb.set(town.id, nb); }
+    let best = n;
+    for (const name of nb) { const o = this.obsInts.get(name); if (o && intensityIndex(o) > intensityIndex(best)) best = o; }
+    return best;
+  }
+
+  // 每秒用最新的測站實測（PLUM）更新各鄉鎮預估與警示區，震源解不變
+  refreshForecast(now) {
+    const sol = this.sol; if (!sol) return;
+    this.townInts = TOWNS.map(tw => this.plumMax(predictAt(sol.M, hypo(tw.c[0], tw.c[1], sol), tw, sol.depth).n, tw));
+    let mi = 0; this.townInts.forEach((v, i) => { if (intensityIndex(v) > intensityIndex(this.townInts[mi])) mi = i; });
+    this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
+    this.region = this.computeRegion(sol);
+    this.checkHomeAlert(now);
+  }
+
   // 套用一個震源解：計算各鄉鎮預估震度與陸地最大震度，以及區域警示範圍
   setForecast(sol, now, calcMs) {
     this.sol = sol; sol.calcMs = calcMs; sol.issued = now;
-    this.townInts = TOWNS.map(tw => predictAt(sol.M, hypo(tw.c[0], tw.c[1], sol), tw, sol.depth).n);
+    this.townInts = TOWNS.map(tw => this.plumMax(predictAt(sol.M, hypo(tw.c[0], tw.c[1], sol), tw, sol.depth).n, tw));
     let mi = 0; this.townInts.forEach((v, i) => { if (intensityIndex(v) > intensityIndex(this.townInts[mi])) mi = i; });
     this.maxLand = { n: this.townInts[mi], town: TOWNS[mi] };
     this.region = this.computeRegion(sol);
@@ -235,25 +266,58 @@ export class TaiwanEEW {
   //   震央可能偏差 u 公里 → 格子到震央的距離先減去 u（假設震央其實更靠近它）
   //   規模可能偏差 σ     → 用 M + σ 計算
   // 保守估計達警示門檻（≥ 4 級）的格子就是警示區；都沒有時改用 3 級門檻。
-  static CELL = 0.1;
+  // 多尺度正方形網格：最小格 0.05°（約 5 km），相鄰四格都在警示區就合併成大一級，最大 0.2°（約 20 km）
+  static BASE = 0.05; static LEVELS = 2; static O = [119.25, 21.85];
   buildCells() {
-    const C = TaiwanEEW.CELL, cells = [];
-    for (let lat = 21.85; lat < 25.4; lat += C) for (let lon = 119.25; lon < 122.1; lon += C) {
-      const cLon = +lon.toFixed(3), cLat = +lat.toFixed(3);
-      // 中心在陸地 → 該鄉鎮；中心在海上但靠岸（7 km 內有鄉鎮中心）→ 歸給最近的鄉鎮，避免沿海鄉鎮漏格
+    const B = TaiwanEEW.BASE, [ox, oy] = TaiwanEEW.O, cells = new Map();
+    for (let j = 0; oy + j * B < 25.45; j++) for (let i = 0; ox + i * B < 122.1; i++) {
+      const cLon = ox + (i + 0.5) * B, cLat = oy + (j + 0.5) * B;
+      // 中心在陸地 → 該鄉鎮；中心在海上但靠岸（4 km 內有鄉鎮中心）→ 歸給最近的鄉鎮，避免沿海鄉鎮漏格
       let town = townAt(cLon, cLat);
       if (!town) {
         let best = null;
-        for (const t of TOWNS) { const d = distKm(cLon, cLat, t.c[0], t.c[1]); if (d < 7 && (!best || d < best.d)) best = { t, d }; }
+        for (const t of TOWNS) { const d = distKm(cLon, cLat, t.c[0], t.c[1]); if (d < 4 && (!best || d < best.d)) best = { t, d }; }
         town = best?.t;
       }
-      if (town) cells.push({ lon: cLon, lat: cLat, town });
+      if (town) cells.set(`${i},${j}`, { i, j, lon: cLon, lat: cLat, town });
     }
+    // 各尺度「含有陸地」的區塊（合併時，純海上的子格視為可略過）
+    this.landBlocks = [new Set(cells.keys())];
+    for (let L = 1; L <= TaiwanEEW.LEVELS; L++) this.landBlocks[L] = new Set([...this.landBlocks[L - 1]].map(k => { const [i, j] = k.split(',').map(Number); return `${i >> 1},${j >> 1}`; }));
     return cells;
   }
-  cellOf(lon, lat) {
-    const C = TaiwanEEW.CELL;
-    return this.cells.find(c => Math.abs(c.lon - lon) <= C / 2 && Math.abs(c.lat - lat) <= C / 2) || null;
+  cellKey(lon, lat) {
+    const B = TaiwanEEW.BASE, [ox, oy] = TaiwanEEW.O;
+    return `${Math.floor((lon - ox) / B)},${Math.floor((lat - oy) / B)}`;
+  }
+  // 由最小格的警示結果，合併出最少數量的正方形
+  mergeBlocks(hit) {
+    const full = [hit];  // full[L]: Map "I,J" → 最大震度
+    for (let L = 1; L <= TaiwanEEW.LEVELS; L++) {
+      full[L] = new Map();
+      const parents = new Set([...full[L - 1].keys()].map(k => { const [i, j] = k.split(',').map(Number); return `${i >> 1},${j >> 1}`; }));
+      for (const pk of parents) {
+        const [I, J] = pk.split(',').map(Number);
+        let ok = true, nFull = 0, mx = '0';
+        for (const [a, b] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+          const ck = `${2 * I + a},${2 * J + b}`;
+          if (full[L - 1].has(ck)) { nFull++; const v = full[L - 1].get(ck); if (intensityIndex(v) > intensityIndex(mx)) mx = v; }
+          else if (this.landBlocks[L - 1].has(ck)) { ok = false; break; }
+        }
+        if (ok && nFull >= 2) full[L].set(pk, mx);
+      }
+    }
+    const out = [];
+    for (let L = TaiwanEEW.LEVELS; L >= 0; L--) {
+      const size = TaiwanEEW.BASE * 2 ** L;
+      for (const [k, n] of full[L]) {
+        const [I, J] = k.split(',').map(Number);
+        let covered = false;  // 已被更大的方塊包含就不重複畫
+        for (let U = L + 1, a = I >> 1, b = J >> 1; U <= TaiwanEEW.LEVELS; U++, a >>= 1, b >>= 1) if (full[U].has(`${a},${b}`)) { covered = true; break; }
+        if (!covered) out.push({ lon: TaiwanEEW.O[0] + (I + 0.5) * size, lat: TaiwanEEW.O[1] + (J + 0.5) * size, size, n });
+      }
+    }
+    return out;
   }
 
   computeRegion(sol) {
@@ -261,21 +325,22 @@ export class TaiwanEEW {
     const n = sol.n;
     const u = sol.prelim ? (n <= 1 ? 25 : n === 2 ? 15 : 10) : (n < 6 ? 5 : 3);           // 震央不確定度（km）
     const sigM = sol.prelim ? (n <= 1 ? 0.8 : 0.5) : (n < 6 ? 0.3 : 0.15);                 // 規模不確定度
-    const lv = this.cells.map(c => {
+    const lv = new Map();
+    for (const [k, c] of this.cells) {
       const epi = Math.max(0, distKm(c.lon, c.lat, sol.lon, sol.lat) - u);
-      return predictAt(sol.M + sigM, Math.hypot(epi, sol.depth), c.town, sol.depth).n;
-    });
+      lv.set(k, this.plumMax(predictAt(sol.M + sigM, Math.hypot(epi, sol.depth), c.town, sol.depth).n, c.town));
+    }
     // 你所在位置也用同樣的保守估計（不受格子邊界影響）
     const he = this.home;
     const homeLv = he && predictAt(sol.M + sigM, Math.hypot(Math.max(0, distKm(he.lon, he.lat, sol.lon, sol.lat) - u), sol.depth), he.site, sol.depth).n;
-    let thr = '4';
-    let hit = this.cells.map((c, i) => ({ ...c, n: lv[i] })).filter(c => intensityIndex(c.n) >= intensityIndex(thr));
-    if (!hit.length) { thr = '3'; hit = this.cells.map((c, i) => ({ ...c, n: lv[i] })).filter(c => intensityIndex(c.n) >= intensityIndex(thr)); }
-    if (!hit.length) return null;
-    const cellKm2 = (TaiwanEEW.CELL * 111.32 * Math.cos(23.7 * Math.PI / 180)) * (TaiwanEEW.CELL * 110.57);
-    const mine = he && this.cellOf(he.lon, he.lat);
-    const homeInside = !!he && (intensityIndex(homeLv) >= intensityIndex(thr) || !!(mine && hit.some(c => c.lon === mine.lon && c.lat === mine.lat)));
-    return { cells: hit, size: TaiwanEEW.CELL, thr, u, sigM, prelim: !!sol.prelim, areaKm2: hit.length * cellKm2, homeInside };
+    const pick = thr => new Map([...lv].filter(([, n]) => intensityIndex(n) >= intensityIndex(thr)));
+    let thr = '4', hit = pick(thr);
+    if (!hit.size) { thr = '3'; hit = pick(thr); }
+    if (!hit.size) return null;
+    const B = TaiwanEEW.BASE, cellKm2 = (B * 111.32 * Math.cos(23.7 * Math.PI / 180)) * (B * 110.57);
+    const homeInside = !!he && (intensityIndex(homeLv) >= intensityIndex(thr) || hit.has(this.cellKey(he.lon, he.lat)));
+    const blocks = this.mergeBlocks(hit);
+    return { blocks, nBase: hit.size, thr, u, sigM, prelim: !!sol.prelim, areaKm2: hit.size * cellKm2, homeInside };
   }
 
   // 你的位置在警示區內 → 發送通知（每次地震只發一次）
@@ -370,6 +435,26 @@ export class TaiwanEEW {
     const advice = left > 0 ? (intensityIndex(hp.n) >= 3 ? '請立即趴下、掩護、穩住' : '可能感到搖晃，請保持冷靜') : '注意安全，留意餘震';
     const t0 = this.sc.q.t0;
     $('eewCard').className = 'eew-card ' + kind;
+    if (prelim) {
+      // 正式速報之前：只呈現「區域警示方框」與你是否在框內，不顯示任何震度數字（尚未確認，避免誤導）
+      const inZone = this.homeInRegion;
+      $('eewCard').innerHTML = `
+        <div class="eew-type"><span>${title}</span><small>${sub}</small></div>
+        <div class="eew-you">
+          <div class="eew-lv zone ${inZone ? 'in' : ''}"><b>${inZone ? '!' : '—'}</b><small>${inZone ? '警示區內' : '區外'}</small></div>
+          <div class="eew-cd">
+            <span class="k">${h.name}</span>
+            <div class="eew-sec ${inZone ? '' : 'out'}">${inZone ? (left > 0 ? `約 ${sec}<small>秒後搖晃</small>` : '搖晃中') : '不在警示區域'}</div>
+            <div class="eew-place">${inZone ? '請立即趴下、掩護、穩住' : '持續注意後續速報'}</div>
+          </div>
+        </div>
+        <div class="eew-epi" style="margin-top:12px">${this.sol.rule}，初估震源：${epi.where.replace('位於', '')}<br>震度數值將於正式速報（≥3 站定位）後公布</div>
+        <div class="eew-meta">發震後 ${((this.firstNotice - t0) / 1000).toFixed(1)} 秒範圍通知 · ${this.region ? `${this.region.blocks.length} 個方塊、約 ${Math.round(this.region.areaKm2 / 100) * 100} km²（保守計入震央 ±${this.region.u} km、規模 +${this.region.sigM}）` : '尚未達警示門檻'}</div>`;
+      this.renderBanner(kind, title, h, null, left, sec);
+      $('twCount').textContent = '正式速報後顯示';
+      $('twTable').innerHTML = '<p class="hint">範圍通知階段只顯示警示方框，震度數值待正式速報確認後公布。</p>';
+      return;
+    }
     $('eewCard').innerHTML = `
       <div class="eew-type"><span>${title}</span><small>${sub}</small></div>
       <div class="eew-you">
@@ -389,7 +474,7 @@ export class TaiwanEEW {
       <div class="eew-epi">${prelim ? '初估震央' : '震央'}：${epi.where.replace('位於', '')}（${epi.text}）<br>最大震度地區：${ml.town.county}${ml.town.name}</div>
       <div class="eew-meta">
         ${this.firstNotice ? `發震後 ${((this.firstNotice - t0) / 1000).toFixed(1)} 秒範圍通知 · ` : ''}${this.firstIssued ? `${((this.firstIssued - t0) / 1000).toFixed(1)} 秒正式速報 · ` : ''}預警 ${lead > 0 ? lead.toFixed(1) + ' 秒' : '無'} ·
-        ${this.region ? `警示區 ${this.region.cells.length} 個區塊、約 ${Math.round(this.region.areaKm2 / 100) * 100} km²（≥${this.region.thr} 級，保守計入震央誤差 ±${this.region.u} km、規模 +${this.region.sigM}）· ` : ''}<span class="q ${so.n < 4 ? '' : 'ok'}">${so.n} 站</span>${so.rejected.length ? ` · 排除 ${so.rejected.length} 個誤觸發` : ''} · 本站${this.localPick ? '已偵測 P 波' : '未偵測'}
+        ${this.region ? `警示區 ${this.region.blocks.length} 個方塊、約 ${Math.round(this.region.areaKm2 / 100) * 100} km²（≥${this.region.thr} 級，保守計入震央誤差 ±${this.region.u} km、規模 +${this.region.sigM}）· ` : ''}<span class="q ${so.n < 4 ? '' : 'ok'}">${so.n} 站</span>${so.rejected.length ? ` · 排除 ${so.rejected.length} 個誤觸發` : ''} · 本站${this.localPick ? '已偵測 P 波' : '未偵測'}
       </div>
       ${this.reveal ? this.truthHtml() : ''}`;
     this.renderBanner(kind, title, h, hp, left, sec);
@@ -413,10 +498,13 @@ export class TaiwanEEW {
     if (this.reveal || left < -20) { b.hidden = true; return; }
     b.hidden = false;
     b.className = 'eew-banner ' + kind;
-    b.innerHTML = `<span class="bn-type">${title}</span>
-      <span class="bn-int" style="background:${INTENSITY_COLORS[hp.n]}">${shortInt(hp.n)}</span>
+    // 範圍通知階段（hp 為 null）：不顯示震度，只顯示是否在警示區
+    const tag = hp ? `<span class="bn-int" style="background:${INTENSITY_COLORS[hp.n]}">${shortInt(hp.n)}</span>`
+      : `<span class="bn-int" style="background:${this.homeInRegion ? '#facc15' : '#4b5563'}">${this.homeInRegion ? '區內' : '區外'}</span>`;
+    const showSec = hp || this.homeInRegion;
+    b.innerHTML = `<span class="bn-type">${title}</span>${tag}
       <span class="bn-place">${h.name}</span>
-      <span class="bn-sec">${left > 0 ? `${sec}<small>秒</small>` : '已抵達'}</span>`;
+      <span class="bn-sec">${showSec ? (left > 0 ? `${sec}<small>秒</small>` : '搖晃中') : ''}</span>`;
   }
 
   truthHtml() {

@@ -1,6 +1,6 @@
 // 台灣地震速報模擬：自訂／預設地震 → 測站觸發 → 本機定位 → 發布速報（一般／緊急）→ 鄉鎮震度預測與倒數
 import { STATIONS, TOWNS, loadTowns, townAt, describeEpicenter, distKm } from './geo.js';
-import { createScenario, locate, locateRobust, noticeCandidates, NOTICE, triggerOf, predictAt, loadModel, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
+import { createScenario, locate, locateRobust, noticeCandidates, NOTICE, triggerOf, predictAt, loadModel, MODEL, dominantFreq, randomQuake, PRESETS, VP, VS } from './eew.js';
 import { siteOf, siteClass } from './site.js';
 import { INTENSITY_COLORS, intensity, intensityIndex } from '../detector.js';
 import { TaiwanMap, shortInt } from './map.js';
@@ -302,6 +302,10 @@ export class TaiwanEEW {
   // 固定大小的正方形網格：邊長 10.00 km（以公里換算經緯度，四邊等長，不是經緯度格）
   //   經度每格 = 10 ÷ (111.32 × cos 23.7°) = 0.09810°，緯度每格 = 10 ÷ 110.57 = 0.09044°
   static SIDE_KM = 10;
+  // 達此規模（含規模不確定度）時，警示區加入預估式誤差保守量。
+  // 12 個真實地震測試：門檻 M6.5 時中型地震（M5.5～6.1）實測 ≥4 級地區只框到 27～64%；
+  // 改為 M5.0 後提升到 73～93%，多出的過度警示多半 0～4 站
+  static BIG_M = 5.0;
   static DLON = TaiwanEEW.SIDE_KM / (111.32 * Math.cos(23.7 * Math.PI / 180));
   static DLAT = TaiwanEEW.SIDE_KM / 110.57;
   static O = [119.25, 21.85];
@@ -335,14 +339,19 @@ export class TaiwanEEW {
     const n = sol.n;
     const u = sol.prelim ? (n <= 1 ? 25 : n === 2 ? 15 : 10) : (n < 6 ? 5 : 3);           // 震央不確定度（km）
     const sigM = sol.prelim ? (n <= 1 ? 0.8 : 0.5) : (n < 6 ? 0.3 : 0.15);                 // 規模不確定度
+    // 模型誤差保守量：M ≥ 5.0 時，預估式本身的誤差（交叉驗證 1 個標準差，約 ×2）也算進去。
+    // 例：2024 花蓮 0403，臺北實測 5 弱但預估式只到 4 級，加上這一項後臺北會被框進警示區
+    const big = sol.M + sigM >= TaiwanEEW.BIG_M;
+    const sA = big ? (MODEL?.test?.gmpeSite?.pgaRmsLog10 ?? 0.3) : 0, sV = big ? (MODEL?.test?.gmpeSite?.pgvRmsLog10 ?? 0.3) : 0;
+    const conservative = (lon, lat, site) => {
+      const p = predictAt(sol.M + sigM, Math.hypot(Math.max(0, distKm(lon, lat, sol.lon, sol.lat) - u), sol.depth), site, sol.depth);
+      return big ? intensity(p.pga * 10 ** sA, p.pgv * 10 ** sV) : p.n;
+    };
     const lv = new Map();
-    for (const [k, c] of this.cells) {
-      const epi = Math.max(0, distKm(c.lon, c.lat, sol.lon, sol.lat) - u);
-      lv.set(k, this.plumMax(predictAt(sol.M + sigM, Math.hypot(epi, sol.depth), c.town, sol.depth).n, c.town));
-    }
+    for (const [k, c] of this.cells) lv.set(k, this.plumMax(conservative(c.lon, c.lat, c.town), c.town));
     // 你所在位置也用同樣的保守估計（不受格子邊界影響）
     const he = this.home;
-    const homeLv = he && predictAt(sol.M + sigM, Math.hypot(Math.max(0, distKm(he.lon, he.lat, sol.lon, sol.lat) - u), sol.depth), he.site, sol.depth).n;
+    const homeLv = he && conservative(he.lon, he.lat, he.site);
     const pick = thr => new Map([...lv].filter(([, n]) => intensityIndex(n) >= intensityIndex(thr)));
     let thr = '4', hit = pick(thr);
     if (!hit.size) { thr = '3'; hit = pick(thr); }
@@ -350,7 +359,7 @@ export class TaiwanEEW {
     const cellKm2 = TaiwanEEW.SIDE_KM ** 2;
     const homeInside = !!he && (intensityIndex(homeLv) >= intensityIndex(thr) || hit.has(this.cellKey(he.lon, he.lat)));
     const blocks = this.toBlocks(hit);
-    return { blocks, nBase: hit.size, thr, u, sigM, prelim: !!sol.prelim, areaKm2: hit.size * cellKm2, homeInside };
+    return { blocks, nBase: hit.size, thr, u, sigM, sigModel: big ? sV : 0, prelim: !!sol.prelim, areaKm2: hit.size * cellKm2, homeInside };
   }
 
   // 你的位置在警示區內 → 發送通知（每次地震只發一次）
@@ -485,7 +494,7 @@ export class TaiwanEEW {
       <div class="eew-epi">${prelim ? '初估震央' : '震央'}：${epi.where.replace('位於', '')}（${epi.text}）<br>最大震度地區：${ml.town.county}${ml.town.name}</div>
       <div class="eew-meta">
         ${this.firstNotice ? `發震後 ${((this.firstNotice - t0) / 1000).toFixed(1)} 秒範圍通知 · ` : ''}${this.firstIssued ? `${((this.firstIssued - t0) / 1000).toFixed(1)} 秒正式速報 · ` : ''}預警 ${lead > 0 ? lead.toFixed(1) + ' 秒' : '無'} ·
-        ${this.region ? `警示區 ${this.region.blocks.length} 個方塊、約 ${Math.round(this.region.areaKm2 / 100) * 100} km²（≥${this.region.thr} 級，保守計入震央誤差 ±${this.region.u} km、規模 +${this.region.sigM}）· ` : ''}<span class="q ${so.n < 4 ? '' : 'ok'}">${so.n} 站</span>${so.rejected.length ? ` · 排除 ${so.rejected.length} 個誤觸發` : ''} · 本站${this.localPick ? '已偵測 P 波' : '未偵測'}
+        ${this.region ? `警示區 ${this.region.blocks.length} 個方塊、約 ${Math.round(this.region.areaKm2 / 100) * 100} km²（≥${this.region.thr} 級，保守計入震央誤差 ±${this.region.u} km、規模 +${this.region.sigM}${this.region.sigModel ? `、模型誤差 ×${(10 ** this.region.sigModel).toFixed(1)}` : ''}）· ` : ''}<span class="q ${so.n < 4 ? '' : 'ok'}">${so.n} 站</span>${so.rejected.length ? ` · 排除 ${so.rejected.length} 個誤觸發` : ''} · 本站${this.localPick ? '已偵測 P 波' : '未偵測'}
       </div>
       ${this.reveal ? this.truthHtml() : ''}`;
     this.renderBanner(kind, title, h, hp, left, sec);

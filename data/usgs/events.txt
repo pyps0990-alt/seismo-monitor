@@ -196,3 +196,27 @@ us6000smlu M5.2 4 km NNE of Hualien City, Taiwan：0 站
 us7000shjp M5.8 32 km ENE of Yilan, Taiwan：77 站
 us6000tnbm M5.5 114 km NE of Hengchun, Taiwan：2 站
 us6000tyhk M5.5 75 km S of Yonakuni, Japan：2 站
+usp0005dd6 M5.9 26 km SSE of Hualien City, Taiwan：0 站
+usp0006khs M5.5 97 km S of Hualien City, Taiwan：0 站
+usp0006znz M6 18 km SSW of Yilan, Taiwan：0 站
+usp000ay9n M5.7 29 km S of Hualien City, Taiwan：0 站
+usp000bcbx M5.5 Taiwan region：0 站
+usp000c015 M5.5 49 km S of Hualien City, Taiwan：0 站
+usp000d6dm M6.7 31 km WNW of Yonakuni, Japan：0 站
+usp000e1wr M6.4 99 km NNE of Yonakuni, Japan：0 站
+usp000fmjx M6.2 66 km SE of Yilan, Taiwan：0 站
+usp000jmjm M5.9 54 km ESE of Yilan, Taiwan：0 站
+usc000t5bu M6.1 77 km NE of Jiufen, Taiwan：5 站
+us20004wk0 M5.7 130 km NNE of Yonakuni, Japan：6 站
+us20005zay M6.4 Taiwan region：1 站
+us6000abge M5.4 56 km WSW of Yonakuni, Japan：0 站
+us7000cpqz M6.1 27 km E of Yilan, Taiwan：111 站
+us6000df68 M5.4 45 km NW of Yonakuni, Japan：0 站
+us7000dzma M5.5 160 km N of Ishigaki, Japan：1 站
+us6000fx56 M6.2 28 km SSE of Yilan, Taiwan：0 站
+us6000h5uk M5.9 147 km N of Ishigaki, Japan：1 站
+us7000ilnl M5 50 km NW of Yonakuni, Japan：1 站
+us6000q4rh M5.3 46 km NNE of Yonakuni, Japan：1 站
+us6000qyt7 M5.5 16 km NNW of Yonakuni, Japan：7 站
+us7000rl2n M6.6 29 km ESE of Yilan, Taiwan：1 站
+us7000shjp M5.8 32 km ENE of Yilan, Taiwan：77 站

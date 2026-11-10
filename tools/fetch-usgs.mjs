@@ -5,8 +5,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+// 加上 --deep：擴大到台灣周邊（含宜蘭外海、與那國島附近的隱沒帶）且只抓深度 ≥ 50 km 的地震
+// 結果會「合併」到既有的 records.json（同一地震同一測站不重複）
 const MINMAG = process.argv[2] || '5.0';
 const START = `${process.argv[3] || 2000}-01-01`;
+const DEEP = process.argv.includes('--deep');
+const BOX = DEEP ? 'minlatitude=20.5&maxlatitude=27&minlongitude=118.5&maxlongitude=124.5&mindepth=50'
+                 : 'minlatitude=21&maxlatitude=26.5&minlongitude=119&maxlongitude=123';
 const OUT = 'data/usgs';
 const CACHE = path.join(OUT, 'cache');
 fs.mkdirSync(CACHE, { recursive: true });
@@ -26,7 +31,7 @@ async function getJSON(url, cacheName) {
 const KX = 111.32 * Math.cos(23.7 * Math.PI / 180), KY = 110.57;
 const dist = (a, b, c, d) => Math.hypot((a - c) * KX, (b - d) * KY);
 
-const q = `https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minlatitude=21&maxlatitude=26.5&minlongitude=119&maxlongitude=123&minmagnitude=${MINMAG}&starttime=${START}&orderby=time-asc`;
+const q = `https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&${BOX}&minmagnitude=${MINMAG}&starttime=${START}&orderby=time-asc`;
 const cat = await getJSON(q);
 const events = cat.features.filter(f => (f.properties.types || '').includes(',shakemap,'));
 console.log(`目錄 ${cat.features.length} 個地震，其中 ${events.length} 個有 ShakeMap`);
@@ -59,7 +64,13 @@ for (const [i, ev] of events.entries()) {
   if (i % 10 === 0) console.log(`  ${i + 1}/${events.length}`);
 }
 
-fs.writeFileSync(path.join(OUT, 'records.json'), JSON.stringify({ source: 'USGS ShakeMap stationlist (https://earthquake.usgs.gov)', fetched: new Date().toISOString(), records }));
-fs.writeFileSync(path.join(OUT, 'events.txt'), summary.join('\n'));
-const evWith = new Set(records.map(r => r.ev)).size;
-console.log(`完成：${evWith} 個地震、${records.length} 筆測站紀錄 → ${OUT}/records.json`);
+// 合併到既有資料
+const file = path.join(OUT, 'records.json');
+const old = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')).records : [];
+const seen = new Set(old.map(r => `${r.ev}|${r.code}`));
+const added = records.filter(r => !seen.has(`${r.ev}|${r.code}`));
+const merged = [...old, ...added];
+fs.writeFileSync(file, JSON.stringify({ source: 'USGS ShakeMap stationlist (https://earthquake.usgs.gov)', fetched: new Date().toISOString(), records: merged }));
+fs.appendFileSync(path.join(OUT, 'events.txt'), '\n' + summary.join('\n'));
+const evAdded = new Set(added.map(r => r.ev)).size;
+console.log(`本次新增：${evAdded} 個地震、${added.length} 筆；合計 ${new Set(merged.map(r => r.ev)).size} 個地震、${merged.length} 筆 → ${file}`);
